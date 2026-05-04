@@ -1,0 +1,30 @@
+[tools]
+go = "1.25"
+
+[tasks.build]
+description = "Build the tt binary"
+run = "go build -o tt ./cmd/tt"
+
+[tasks.test]
+description = "Run unit tests"
+run = "go test ./..."
+
+[tasks."test:integ"]
+description = "Run integration tests (requires real SQLite)"
+run = "go test -tags integration ./..."
+
+[tasks."test:all"]
+description = "Run unit and integration tests"
+run = "go test -tags integration ./..."
+
+[tasks.run]
+description = "Run tt (pass args via -- e.g. mise run run -- ls)"
+run = "go run ./cmd/tt"
+
+[tasks.lint]
+description = "Run go vet"
+run = "go vet ./..."
+
+[tasks.install]
+description = "Install tt to $GOPATH/bin"
+run = "go install ./cmd/tt"

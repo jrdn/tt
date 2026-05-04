@@ -1,0 +1,43 @@
+package cmd
+
+import (
+	"fmt"
+	"os/user"
+
+	"github.com/jrdn/tt/internal/task"
+	"github.com/spf13/cobra"
+)
+
+func newCommentCmd() *cobra.Command {
+	var author string
+
+	cmd := &cobra.Command{
+		Use:     "comment <id> <body>",
+		Aliases: []string{"c"},
+		Short:   "Add a comment to a task",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if author == "" {
+				if u, err := user.Current(); err == nil {
+					author = u.Username
+				}
+			}
+			var authorPtr *string
+			if author != "" {
+				authorPtr = &author
+			}
+			c, err := task.AddComment(db, args[0], args[1], authorPtr)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return printJSON(c)
+			}
+			fmt.Printf("comment %s added\n", c.ID)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&author, "author", "", "Author handle")
+	return cmd
+}

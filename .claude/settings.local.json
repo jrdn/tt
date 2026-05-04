@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(TASKS_DB=/tmp/tt-test.db go run ./cmd/tt init --file /tmp/test-agents.md)",
+      "Read(//private/tmp/**)",
+      "Bash(TASKS_DB=/tmp/tt-test.db go run ./cmd/tt init --file /tmp/test-agents2.md)",
+      "Read(//tmp/**)",
+      "Bash(TASKS_DB=/tmp/tt-test.db go run ./cmd/tt --help)",
+      "Bash(TASKS_DB=/tmp/tt-test.db go test ./... -cover)",
+      "Bash(TASKS_DB=/tmp/tt-test.db go run ./cmd/tt init)"
+    ]
+  }
+}
