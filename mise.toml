@@ -26,5 +26,5 @@ description = "Run go vet"
 run = "go vet ./..."
 
 [tasks.install]
-description = "Install tt to $GOPATH/bin"
-run = "go install ./cmd/tt"
+description = "Install tt to ~/.local/bin"
+run = "GOBIN=$HOME/.local/bin go install ./cmd/tt"
