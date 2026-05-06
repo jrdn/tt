@@ -85,22 +85,20 @@ func dbPath() (string, error) {
 }
 
 func repoDBName() (string, error) {
+	root, err := repoRoot()
+	if err != nil {
+		// Not in a git repo — use global fallback
+		return "tasks", nil
+	}
+
 	// Check for explicit override in git config
-	out, err := exec.Command("git", "config", "--local", "tt.db-name").Output()
+	out, err := exec.Command("git", "-C", root, "config", "--local", "tt.db-name").Output()
 	if err == nil {
 		name := strings.TrimSpace(string(out))
 		if name != "" {
 			return name, nil
 		}
 	}
-
-	// Find git root
-	out, err = exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		// Not in a git repo — use global fallback
-		return "tasks", nil
-	}
-	root := strings.TrimSpace(string(out))
 
 	// Check for name collision: two repos with same basename
 	repoName := filepath.Base(root)
@@ -131,4 +129,58 @@ func repoDBName() (string, error) {
 	}
 
 	return repoName, nil
+}
+
+func repoRoot() (string, error) {
+	root, err := gitRoot(".")
+	if err != nil {
+		return "", err
+	}
+	if primaryRoot, err := primaryWorktreeRoot(root); err == nil {
+		root = primaryRoot
+	}
+
+	for {
+		parent := filepath.Dir(root)
+		if parent == root {
+			return root, nil
+		}
+
+		parentRoot, err := gitRoot(parent)
+		if err != nil || parentRoot == root {
+			return root, nil
+		}
+		root = parentRoot
+	}
+}
+
+func primaryWorktreeRoot(root string) (string, error) {
+	out, err := exec.Command("git", "-C", root, "rev-parse", "--git-common-dir").Output()
+	if err != nil {
+		return "", err
+	}
+	commonDir := strings.TrimSpace(string(out))
+	if commonDir == "" {
+		return root, nil
+	}
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(root, commonDir)
+	}
+	commonDir = filepath.Clean(commonDir)
+	if filepath.Base(commonDir) != ".git" {
+		return root, nil
+	}
+	primaryRoot := filepath.Dir(commonDir)
+	if _, err := os.Stat(primaryRoot); err != nil {
+		return root, nil
+	}
+	return primaryRoot, nil
+}
+
+func gitRoot(dir string) (string, error) {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }

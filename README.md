@@ -29,6 +29,8 @@ Tasks are stored in a SQLite file under `~/.config/tt/`. The CLI talks to it dir
 Databases live under `~/.config/tt/`. The active database is selected automatically:
 
 1. If the current directory is inside a git repo, uses `~/.config/tt/<repo-name>.db`
+   - When working inside a linked worktree, uses the primary worktree repo name
+   - When working inside a nested git repo, uses the enclosing parent repo name
 2. Otherwise falls back to `~/.config/tt/tasks.db`
 
 If two unrelated repos share the same name, `tt` errors on startup with a message explaining the conflict. Override the DB name for a repo via git config:
