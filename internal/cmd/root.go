@@ -34,6 +34,7 @@ func NewRoot(database *sqlx.DB) *cobra.Command {
 		newEditCmd(),
 		newSearchCmd(),
 		newClaimCmd(),
+		newPrimeCmd(),
 	)
 
 	return root
