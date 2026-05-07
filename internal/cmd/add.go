@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 
 	"github.com/jrdn/tt/internal/task"
 	"github.com/spf13/cobra"
@@ -19,12 +21,20 @@ func newAddCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:     "add <title>",
+		Use:     "add [title] [description]",
 		Aliases: []string{"new", "n"},
 		Short:   "Create a new task",
-		Args:    cobra.MinimumNArgs(1),
+		Args:    cobra.RangeArgs(0, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// No title: open editor with blank template
+			if len(args) == 0 {
+				return addFromEditor()
+			}
+
 			title := args[0]
+			if len(args) == 2 && !cmd.Flags().Changed("description") {
+				description = args[1]
+			}
 			opts := task.CreateOpts{
 				Priority:    priority,
 				PrioritySet: prioritySet,
@@ -69,4 +79,64 @@ func newAddCmd() *cobra.Command {
 	}
 
 	return cmd
+}
+
+func addFromEditor() error {
+	stub := &task.Task{Status: task.StatusOpen, Priority: 2}
+	template := serializeTask(stub)
+
+	f, err := os.CreateTemp("", "tt-*.md")
+	if err != nil {
+		return err
+	}
+	tmpPath := f.Name()
+	defer os.Remove(tmpPath)
+	if _, err := f.WriteString(template); err != nil {
+		f.Close()
+		return err
+	}
+	f.Close()
+
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+	c := exec.Command(editor, tmpPath)
+	c.Stdin = os.Stdin
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	if err := c.Run(); err != nil {
+		return err
+	}
+
+	data, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return err
+	}
+
+	parsed, err := parseTaskFile(stub, string(data))
+	if err != nil {
+		return err
+	}
+	if parsed.Title == "" {
+		return fmt.Errorf("title is required")
+	}
+
+	opts := task.CreateOpts{
+		Priority:    parsed.Priority,
+		PrioritySet: true,
+		Description: parsed.Description,
+		ParentID:    parsed.ParentID,
+		Assignee:    parsed.Assignee,
+		DueDate:     parsed.DueDate,
+	}
+	t, err := task.Create(db, parsed.Title, opts)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return printJSON(t)
+	}
+	fmt.Printf("created %s\n", t.ID)
+	return nil
 }

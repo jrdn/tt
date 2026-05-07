@@ -181,6 +181,15 @@ func Update(db *sqlx.DB, prefix string, opts UpdateOpts) (*Task, error) {
 	return t, err
 }
 
+func Save(db *sqlx.DB, t *Task) error {
+	_, err := db.NamedExec(`UPDATE tasks SET
+		title=:title, status=:status, parent_id=:parent_id, description=:description,
+		priority=:priority, assignee=:assignee, due_date=:due_date,
+		updated_at=:updated_at, closed_at=:closed_at
+		WHERE id=:id`, t)
+	return err
+}
+
 func AddComment(db *sqlx.DB, taskPrefix, body string, author *string) (*Comment, error) {
 	t, err := Get(db, taskPrefix)
 	if err != nil {
