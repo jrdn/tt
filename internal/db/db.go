@@ -63,6 +63,9 @@ func OpenPath(path string) (*sqlx.DB, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	if _, err := db.Exec(`UPDATE tasks SET priority=3 WHERE priority=4`); err != nil {
+		return nil, fmt.Errorf("migrate priority: %w", err)
+	}
 	return db, nil
 }
 

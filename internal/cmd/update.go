@@ -61,10 +61,10 @@ func newUpdateCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&status, "status", "s", "", "New status (open, in_progress, done, cancelled)")
+	cmd.Flags().StringVarP(&status, "status", "s", "", "New status (backlog, open, in_progress, done, cancelled)")
 	cmd.Flags().StringVarP(&title, "title", "t", "", "New title")
 	cmd.Flags().StringVarP(&description, "description", "d", "", "New description")
-	cmd.Flags().IntVarP(&priority, "priority", "p", 0, "New priority (0-4)")
+	cmd.Flags().IntVarP(&priority, "priority", "p", 0, "New priority (0=critical, 3=low)")
 	cmd.Flags().StringVarP(&assignee, "assignee", "a", "", "New assignee")
 	cmd.Flags().StringVarP(&dueDate, "due", "D", "", "New due date (YYYY-MM-DD)")
 	cmd.Flags().StringVarP(&parentID, "parent", "P", "", "New parent task ID")

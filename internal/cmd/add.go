@@ -69,7 +69,7 @@ func newAddCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&parent, "parent", "", "Parent task ID")
 	cmd.Flags().StringVarP(&description, "description", "d", "", "Task description")
-	cmd.Flags().IntVarP(&priority, "priority", "p", 2, "Priority 0-4 (0=critical, 4=backlog)")
+	cmd.Flags().IntVarP(&priority, "priority", "p", 2, "Priority 0-3 (0=critical, 3=low)")
 	cmd.Flags().StringVar(&createdBy, "created-by", "", "Creator handle")
 	cmd.Flags().StringVar(&assignee, "assignee", "", "Assignee handle (e.g. jrdn, claude/opus4.7)")
 	cmd.Flags().StringVar(&dueDate, "due", "", "Due date (YYYY-MM-DD)")

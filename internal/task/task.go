@@ -10,6 +10,7 @@ import (
 type Status string
 
 const (
+	StatusBacklog    Status = "backlog"
 	StatusOpen       Status = "open"
 	StatusInProgress Status = "in_progress"
 	StatusDone       Status = "done"
@@ -105,13 +106,22 @@ type ListOpts struct {
 	Status   string
 	ParentID string
 	All      bool
+	Ready    bool
 }
 
 func List(db *sqlx.DB, opts ListOpts) ([]Task, error) {
 	query := `SELECT * FROM tasks WHERE 1=1`
 	args := []any{}
 
-	if opts.Status != "" {
+	if opts.Ready {
+		query += ` AND status = 'open'`
+		query += ` AND NOT EXISTS (
+			SELECT 1 FROM relations r
+			JOIN tasks b ON b.id = r.from_id
+			WHERE r.to_id = tasks.id AND r.type = 'blocks'
+			AND b.status NOT IN ('done', 'cancelled')
+		)`
+	} else if opts.Status != "" {
 		query += ` AND status = ?`
 		args = append(args, opts.Status)
 	} else if !opts.All {

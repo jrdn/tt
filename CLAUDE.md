@@ -34,7 +34,7 @@ Storage: `~/.config/tt/<repo-name>.db` when inside a git repo, `~/.config/tt/tas
 
 ## Conventions & Patterns
 
-- IDs are 4-char base32 short hashes. All lookups accept a prefix.
+- IDs are 7-char base62 short hashes. All lookups accept a prefix.
 - Assignee is freeform: `jrdn`, `claude/opus4.7`, `lmstudio/qwen3-coder`.
 - Integration tests use `//go:build integration` and open a temp DB via `db.OpenPath(t.TempDir() + "/test.db")`.
 
@@ -45,9 +45,11 @@ This project uses **tt** for task tracking. Tasks live in a local SQLite databas
 ### Key Commands
 
 ```bash
-tt ls                                        # list open tasks
-tt ls --status=in_progress                  # filter by status
+tt ls                                        # list open + in_progress tasks
+tt ls --ready                               # open tasks with no unresolved blockers
+tt ls --status=backlog                      # backlog tasks
 tt add "title"                              # create a task
+tt add "title" "description"               # create with description
 tt add "title" --assignee claude/opus4.7   # assign on create
 tt show <id>                                # full detail: subtasks, relations, comments
 tt done <id>                                # mark done
@@ -55,15 +57,17 @@ tt update <id> --status=in_progress         # update any field
 tt update <id> --assignee <handle>          # reassign
 tt comment <id> "note"                      # append progress note without editing description
 tt relate <id> blocks <id>                  # link tasks (blocks | duplicates | related)
+tt edit <id>                                # edit task in $EDITOR
 ```
 
 ### Notes for Agents
 
 - All commands accept `--json` for machine-readable output. `tt show <id> --json` returns task, subtasks, relations, and comments in one object.
-- IDs are short 4-char base32 hashes. Prefix matching is supported — `tt show ab` works if unambiguous.
+- IDs are 7-char base62 hashes. Prefix matching is supported — `tt show ab` works if unambiguous.
 - `--assignee` accepts free-form handles: `jrdn`, `claude/opus4.7`, `lmstudio/qwen3-coder`.
 - Use `tt comment` to log reasoning and progress without overwriting the description. Always pass `--author` to identify yourself (e.g. `--author claude/opus4.7`, `--author cursor/claude-sonnet`) — default falls back to OS username, which is not meaningful for agents.
-- Priority: 0=critical, 1=high, 2=normal (default), 3=low, 4=backlog.
+- Priority: 0=critical, 1=high, 2=normal (default), 3=low.
+- Status lifecycle: backlog → open → in_progress → done / cancelled. Backlog tasks are hidden from `tt ls` by default.
 
 ### Sync
 

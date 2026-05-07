@@ -10,19 +10,19 @@ import (
 
 var (
 	statusColors = map[task.Status]*color.Color{
+		task.StatusBacklog:    color.New(color.FgHiBlack),
 		task.StatusOpen:       color.New(color.FgCyan),
 		task.StatusInProgress: color.New(color.FgBlue, color.Bold),
 		task.StatusDone:       color.New(color.FgGreen),
 		task.StatusCancelled:  color.New(color.Faint),
 	}
-	priorityColors = [5]*color.Color{
-		color.New(color.FgRed, color.Bold),  // 0 critical
+	priorityColors = [4]*color.Color{
+		color.New(color.FgRed, color.Bold),    // 0 critical
 		color.New(color.FgYellow, color.Bold), // 1 high
-		color.New(color.Reset),              // 2 normal
-		color.New(color.FgHiBlack),           // 3 low
-		color.New(color.FgHiBlack),           // 4 backlog
+		color.New(color.Reset),                // 2 normal
+		color.New(color.FgHiBlack),            // 3 low
 	}
-	priorityLabels = [5]string{"●", "◕", "◑", "◔", "○"}
+	priorityLabels = [4]string{"●", "◕", "◑", "◔"}
 )
 
 func newLsCmd() *cobra.Command {
@@ -30,6 +30,7 @@ func newLsCmd() *cobra.Command {
 		status   string
 		parentID string
 		all      bool
+		ready    bool
 	)
 
 	cmd := &cobra.Command{
@@ -41,6 +42,7 @@ func newLsCmd() *cobra.Command {
 				Status:   status,
 				ParentID: parentID,
 				All:      all,
+				Ready:    ready,
 			})
 			if err != nil {
 				return err
@@ -61,7 +63,7 @@ func newLsCmd() *cobra.Command {
 				}
 
 				p := t.Priority
-				if p < 0 || p > 4 {
+				if p < 0 || p > 3 {
 					p = 2
 				}
 				priLabel := priorityColors[p].Sprint(priorityLabels[p])
@@ -84,9 +86,10 @@ func newLsCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&status, "status", "", "Filter by status (open, in_progress, done, cancelled)")
+	cmd.Flags().StringVar(&status, "status", "", "Filter by status (backlog, open, in_progress, done, cancelled)")
 	cmd.Flags().StringVar(&parentID, "parent", "", "Show subtasks of this task")
-	cmd.Flags().BoolVarP(&all, "all", "a", false, "Include done and cancelled tasks")
+	cmd.Flags().BoolVarP(&all, "all", "a", false, "Include all statuses")
+	cmd.Flags().BoolVarP(&ready, "ready", "r", false, "Open tasks with no unresolved blockers")
 
 	return cmd
 }

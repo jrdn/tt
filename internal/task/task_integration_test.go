@@ -108,6 +108,35 @@ func TestGet_LegacyShortID(t *testing.T) {
 	}
 }
 
+func TestOpenPath_MigratesPriority4(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	d, err := db.OpenPath(path)
+	if err != nil {
+		t.Fatalf("OpenPath: %v", err)
+	}
+	ts := now()
+	_, err = d.Exec(`INSERT INTO tasks (id,title,status,priority,created_at,updated_at) VALUES (?,?,?,?,?,?)`,
+		"zzzz", "legacy backlog task", "open", 4, ts, ts)
+	if err != nil {
+		t.Fatalf("insert priority-4 task: %v", err)
+	}
+	d.Close()
+
+	d2, err := db.OpenPath(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer d2.Close()
+
+	got, err := Get(d2, "zzzz")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Priority != 3 {
+		t.Errorf("priority = %d after migration, want 3", got.Priority)
+	}
+}
+
 func TestGet_AmbiguousPrefix(t *testing.T) {
 	d := openTestDB(t)
 	// Force two tasks with the same first character by trying many times — instead,
