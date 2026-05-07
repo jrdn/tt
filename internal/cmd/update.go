@@ -19,10 +19,10 @@ func newUpdateCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:     "update <id>",
+		Use:     "update <id> [id...]",
 		Aliases: []string{"u"},
-		Short:   "Update task fields",
-		Args:  cobra.ExactArgs(1),
+		Short:   "Update fields on one or more tasks",
+		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := task.UpdateOpts{}
 
@@ -49,14 +49,20 @@ func newUpdateCmd() *cobra.Command {
 				opts.ParentID = &parentID
 			}
 
-			t, err := task.Update(db, args[0], opts)
-			if err != nil {
-				return err
+			var last *task.Task
+			for _, id := range args {
+				t, err := task.Update(db, id, opts)
+				if err != nil {
+					return err
+				}
+				last = t
+				if !jsonOutput {
+					fmt.Printf("updated %s\n", t.ID)
+				}
 			}
 			if jsonOutput {
-				return printJSON(t)
+				return printJSON(last)
 			}
-			fmt.Printf("updated %s\n", t.ID)
 			return nil
 		},
 	}

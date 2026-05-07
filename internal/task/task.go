@@ -200,6 +200,17 @@ func Save(db *sqlx.DB, t *Task) error {
 	return err
 }
 
+func Search(db *sqlx.DB, query string) ([]Task, error) {
+	q := "%" + query + "%"
+	var tasks []Task
+	err := db.Select(&tasks, `
+		SELECT DISTINCT t.* FROM tasks t
+		LEFT JOIN comments c ON c.task_id = t.id
+		WHERE t.title LIKE ? OR t.description LIKE ? OR c.body LIKE ?
+		ORDER BY t.priority ASC, t.created_at ASC`, q, q, q)
+	return tasks, err
+}
+
 func AddComment(db *sqlx.DB, taskPrefix, body string, author *string) (*Comment, error) {
 	t, err := Get(db, taskPrefix)
 	if err != nil {
