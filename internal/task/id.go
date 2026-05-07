@@ -2,23 +2,26 @@ package task
 
 import (
 	"crypto/rand"
-	"encoding/base32"
 	"strings"
 )
 
-var encoding = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").WithPadding(base32.NoPadding)
+const idAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+const idLen = 7
 
 func NewID() string {
-	b := make([]byte, 4)
+	b := make([]byte, idLen)
 	if _, err := rand.Read(b); err != nil {
 		panic(err)
 	}
-	return encoding.EncodeToString(b)[:4]
+	for i, v := range b {
+		b[i] = idAlphabet[v%62]
+	}
+	return string(b)
 }
 
 func ShortID(id string) string {
-	if len(id) > 6 {
-		return id[:6]
+	if len(id) > idLen {
+		return id[:idLen]
 	}
 	return id
 }

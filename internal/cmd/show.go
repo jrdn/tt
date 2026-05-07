@@ -83,7 +83,7 @@ func newShowCmd() *cobra.Command {
 					if c.Author != nil {
 						author = *c.Author
 					}
-					fmt.Printf("  [%s] %s: %s\n", c.CreatedAt[:10], author, c.Body)
+					fmt.Printf("  [%s] [%s] %s: %s\n", c.ID, c.CreatedAt[:10], author, c.Body)
 				}
 			}
 

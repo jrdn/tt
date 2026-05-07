@@ -6,15 +6,14 @@ import (
 
 func TestNewID_Length(t *testing.T) {
 	id := NewID()
-	if len(id) != 4 {
-		t.Errorf("expected 4-char ID, got %q (len %d)", id, len(id))
+	if len(id) != idLen {
+		t.Errorf("expected %d-char ID, got %q (len %d)", idLen, id, len(id))
 	}
 }
 
 func TestNewID_Unique(t *testing.T) {
-	// 4-char base32 = ~1M values; 50 samples gives <0.12% collision probability
 	seen := make(map[string]bool)
-	for range 50 {
+	for range 1000 {
 		id := NewID()
 		if seen[id] {
 			t.Fatalf("collision on ID %q after %d generations", id, len(seen))
@@ -24,11 +23,10 @@ func TestNewID_Unique(t *testing.T) {
 }
 
 func TestNewID_Charset(t *testing.T) {
-	const valid = "abcdefghijklmnopqrstuvwxyz234567"
 	for range 100 {
 		id := NewID()
 		for _, c := range id {
-			if !contains(valid, byte(c)) {
+			if !contains(idAlphabet, byte(c)) {
 				t.Errorf("ID %q contains invalid character %q", id, c)
 			}
 		}

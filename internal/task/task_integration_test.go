@@ -83,6 +83,31 @@ func TestGet_PrefixMatch(t *testing.T) {
 	}
 }
 
+func TestGet_LegacyShortID(t *testing.T) {
+	d := openTestDB(t)
+	// Simulate a 4-char ID from before the base62 migration by inserting directly.
+	ts := now()
+	_, err := d.Exec(`INSERT INTO tasks (id,title,status,priority,created_at,updated_at) VALUES (?,?,?,?,?,?)`,
+		"abcd", "legacy task", StatusOpen, 2, ts, ts)
+	if err != nil {
+		t.Fatalf("insert legacy task: %v", err)
+	}
+	got, err := Get(d, "abcd")
+	if err != nil {
+		t.Fatalf("Get by full 4-char ID: %v", err)
+	}
+	if got.ID != "abcd" {
+		t.Errorf("got ID %q, want %q", got.ID, "abcd")
+	}
+	got2, err := Get(d, "ab")
+	if err != nil {
+		t.Fatalf("Get by 2-char prefix: %v", err)
+	}
+	if got2.ID != "abcd" {
+		t.Errorf("got ID %q, want %q", got2.ID, "abcd")
+	}
+}
+
 func TestGet_AmbiguousPrefix(t *testing.T) {
 	d := openTestDB(t)
 	// Force two tasks with the same first character by trying many times — instead,
