@@ -166,6 +166,8 @@ func Update(db *sqlx.DB, prefix string, opts UpdateOpts) (*Task, error) {
 		if *opts.Status == StatusDone || *opts.Status == StatusCancelled {
 			ts := now()
 			t.ClosedAt = &ts
+		} else {
+			t.ClosedAt = nil
 		}
 	}
 	if opts.Title != nil {
