@@ -105,6 +105,7 @@ func Get(db *sqlx.DB, prefix string) (*Task, error) {
 type ListOpts struct {
 	Status   string
 	ParentID string
+	Assignee string
 	All      bool
 	Ready    bool
 }
@@ -126,6 +127,10 @@ func List(db *sqlx.DB, opts ListOpts) ([]Task, error) {
 		args = append(args, opts.Status)
 	} else if !opts.All {
 		query += ` AND status IN ('open', 'in_progress')`
+	}
+	if opts.Assignee != "" {
+		query += ` AND assignee = ?`
+		args = append(args, opts.Assignee)
 	}
 	if opts.ParentID != "" {
 		query += ` AND parent_id LIKE ? || '%'`
@@ -245,6 +250,19 @@ func AddRelation(db *sqlx.DB, fromPrefix, relType, toPrefix string) error {
 	}
 	_, err = db.Exec(`INSERT OR REPLACE INTO relations (from_id, to_id, type) VALUES (?,?,?)`,
 		from.ID, to.ID, relType)
+	return err
+}
+
+func RemoveRelation(db *sqlx.DB, fromPrefix, relType, toPrefix string) error {
+	from, err := Get(db, fromPrefix)
+	if err != nil {
+		return fmt.Errorf("from: %w", err)
+	}
+	to, err := Get(db, toPrefix)
+	if err != nil {
+		return fmt.Errorf("to: %w", err)
+	}
+	_, err = db.Exec(`DELETE FROM relations WHERE from_id=? AND to_id=? AND type=?`, from.ID, to.ID, relType)
 	return err
 }
 

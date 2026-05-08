@@ -29,6 +29,7 @@ func newLsCmd() *cobra.Command {
 	var (
 		status   string
 		parentID string
+		assignee string
 		all      bool
 		ready    bool
 	)
@@ -41,6 +42,7 @@ func newLsCmd() *cobra.Command {
 			tasks, err := task.List(db, task.ListOpts{
 				Status:   status,
 				ParentID: parentID,
+				Assignee: assignee,
 				All:      all,
 				Ready:    ready,
 			})
@@ -88,7 +90,8 @@ func newLsCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&status, "status", "", "Filter by status (backlog, open, in_progress, done, cancelled)")
 	cmd.Flags().StringVar(&parentID, "parent", "", "Show subtasks of this task")
-	cmd.Flags().BoolVarP(&all, "all", "a", false, "Include all statuses")
+	cmd.Flags().StringVarP(&assignee, "assignee", "a", "", "Filter by assignee handle")
+	cmd.Flags().BoolVar(&all, "all", false, "Include all statuses")
 	cmd.Flags().BoolVarP(&ready, "ready", "r", false, "Open tasks with no unresolved blockers")
 
 	return cmd
