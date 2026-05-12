@@ -6,11 +6,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite"
 )
+
+// SchemaVersion is incremented whenever the database schema changes.
+const SchemaVersion = 1
 
 const schema = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -42,7 +46,46 @@ CREATE TABLE IF NOT EXISTS relations (
 	type    TEXT NOT NULL CHECK(type IN ('blocks','duplicates','related')),
 	PRIMARY KEY (from_id, to_id, type)
 );
+
+CREATE TABLE IF NOT EXISTS meta (
+	key   TEXT PRIMARY KEY,
+	value TEXT NOT NULL DEFAULT ''
+);
 `
+
+// triggerDefs lists (name, body) for every mutation trigger. On each open
+// they are dropped and recreated so the definitions here are always canonical.
+var triggerDefs = []struct{ name, body string }{
+	{"meta_mut_tasks_insert", `AFTER INSERT ON tasks BEGIN
+	UPDATE meta SET value = NEW.updated_at                            WHERE key = 'last_mutation_at';
+	UPDATE meta SET value = CAST(CAST(value AS INTEGER)+1 AS TEXT)   WHERE key = 'mutation_count';
+END`},
+	{"meta_mut_tasks_update", `AFTER UPDATE ON tasks BEGIN
+	UPDATE meta SET value = NEW.updated_at                            WHERE key = 'last_mutation_at';
+	UPDATE meta SET value = CAST(CAST(value AS INTEGER)+1 AS TEXT)   WHERE key = 'mutation_count';
+END`},
+	{"meta_mut_tasks_delete", `AFTER DELETE ON tasks BEGIN
+	UPDATE meta SET value = strftime('%Y-%m-%dT%H:%M:%SZ','now')     WHERE key = 'last_mutation_at';
+	UPDATE meta SET value = CAST(CAST(value AS INTEGER)+1 AS TEXT)   WHERE key = 'mutation_count';
+END`},
+	{"meta_mut_comments_insert", `AFTER INSERT ON comments BEGIN
+	UPDATE meta SET value = NEW.created_at                            WHERE key = 'last_mutation_at';
+	UPDATE meta SET value = CAST(CAST(value AS INTEGER)+1 AS TEXT)   WHERE key = 'mutation_count';
+END`},
+	{"meta_mut_comments_delete", `AFTER DELETE ON comments BEGIN
+	UPDATE meta SET value = strftime('%Y-%m-%dT%H:%M:%SZ','now')     WHERE key = 'last_mutation_at';
+	UPDATE meta SET value = CAST(CAST(value AS INTEGER)+1 AS TEXT)   WHERE key = 'mutation_count';
+END`},
+	{"meta_mut_relations_insert", `AFTER INSERT ON relations BEGIN
+	UPDATE meta SET value = strftime('%Y-%m-%dT%H:%M:%SZ','now')     WHERE key = 'last_mutation_at';
+	UPDATE meta SET value = CAST(CAST(value AS INTEGER)+1 AS TEXT)   WHERE key = 'mutation_count';
+END`},
+	{"meta_mut_relations_delete", `AFTER DELETE ON relations BEGIN
+	UPDATE meta SET value = strftime('%Y-%m-%dT%H:%M:%SZ','now')     WHERE key = 'last_mutation_at';
+	UPDATE meta SET value = CAST(CAST(value AS INTEGER)+1 AS TEXT)   WHERE key = 'mutation_count';
+END`},
+}
+
 
 func Open() (*sqlx.DB, error) {
 	path, err := dbPath()
@@ -66,7 +109,63 @@ func OpenPath(path string) (*sqlx.DB, error) {
 	if _, err := db.Exec(`UPDATE tasks SET priority=3 WHERE priority=4`); err != nil {
 		return nil, fmt.Errorf("migrate priority: %w", err)
 	}
+	if err := applyTriggers(db); err != nil {
+		return nil, fmt.Errorf("apply triggers: %w", err)
+	}
+	if err := initMeta(db); err != nil {
+		return nil, fmt.Errorf("init meta: %w", err)
+	}
 	return db, nil
+}
+
+// applyTriggers drops and recreates all mutation triggers so that the
+// definitions in triggerDefs are always canonical regardless of DB age.
+func applyTriggers(db *sqlx.DB) error {
+	for _, t := range triggerDefs {
+		if _, err := db.Exec(`DROP TRIGGER IF EXISTS ` + t.name); err != nil {
+			return err
+		}
+		if _, err := db.Exec(`CREATE TRIGGER ` + t.name + ` ` + t.body); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func initMeta(db *sqlx.DB) error {
+	_, err := db.Exec(`INSERT OR IGNORE INTO meta (key, value) VALUES
+		('schema_version',  ?),
+		('app_version',     ''),
+		('last_mutation_at',''),
+		('mutation_count',  '0')`,
+		strconv.Itoa(SchemaVersion))
+	if err != nil {
+		return err
+	}
+	// Always reflect the current binary's schema version.
+	if _, err := db.Exec(`UPDATE meta SET value = ? WHERE key = 'schema_version'`,
+		strconv.Itoa(SchemaVersion)); err != nil {
+		return err
+	}
+	// Back-fill last_mutation_at for pre-existing databases that predate this table.
+	_, err = db.Exec(`UPDATE meta
+		SET value = (SELECT COALESCE(MAX(updated_at), '') FROM tasks)
+		WHERE key = 'last_mutation_at' AND value = ''`)
+	return err
+}
+
+// GetMeta returns the value for key from the meta table.
+func GetMeta(db *sqlx.DB, key string) (string, error) {
+	var value string
+	err := db.QueryRow(`SELECT value FROM meta WHERE key = ?`, key).Scan(&value)
+	return value, err
+}
+
+// SetMeta upserts a key/value pair in the meta table.
+func SetMeta(db *sqlx.DB, key, value string) error {
+	_, err := db.Exec(`INSERT INTO meta (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+	return err
 }
 
 func dbPath() (string, error) {
