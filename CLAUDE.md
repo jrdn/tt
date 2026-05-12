@@ -67,7 +67,7 @@ tt edit <id>                                # edit task in $EDITOR
 - `--assignee` accepts free-form handles: `jrdn`, `claude/opus4.7`, `lmstudio/qwen3-coder`.
 - Use `tt comment` to log reasoning and progress without overwriting the description. Always pass `--author` to identify yourself (e.g. `--author claude/opus4.7`, `--author cursor/claude-sonnet`) — default falls back to OS username, which is not meaningful for agents.
 - Priority: 0=critical, 1=high, 2=normal (default), 3=low.
-- Status lifecycle: backlog → open → in_progress → done / cancelled. Backlog tasks are hidden from `tt ls` by default.
+- Status lifecycle: backlog → open → ready → in_progress → done / cancelled. Backlog tasks are hidden from `tt ls` by default.
 
 ### Sync
 

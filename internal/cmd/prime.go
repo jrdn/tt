@@ -24,7 +24,7 @@ const ttOverview = `tt — local-first task manager
   tt edit <id>            edit task in $EDITOR
 
   IDs are 7-char base62; prefix matching is supported (tt show ab matches abcdefg).
-  Priority: 0=critical 1=high 2=normal 3=low. Status: backlog→open→in_progress→done/cancelled.
+  Priority: 0=critical 1=high 2=normal 3=low. Status: backlog→open→ready→in_progress→done/cancelled.
   All commands accept --json for machine-readable output.`
 
 func newPrimeCmd() *cobra.Command {

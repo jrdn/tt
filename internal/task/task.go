@@ -12,6 +12,7 @@ type Status string
 const (
 	StatusBacklog    Status = "backlog"
 	StatusOpen       Status = "open"
+	StatusReady      Status = "ready"
 	StatusInProgress Status = "in_progress"
 	StatusDone       Status = "done"
 	StatusCancelled  Status = "cancelled"
@@ -115,7 +116,7 @@ func List(db *sqlx.DB, opts ListOpts) ([]Task, error) {
 	args := []any{}
 
 	if opts.Ready {
-		query += ` AND status = 'open'`
+		query += ` AND status IN ('open', 'ready')`
 		query += ` AND NOT EXISTS (
 			SELECT 1 FROM relations r
 			JOIN tasks b ON b.id = r.from_id
@@ -126,7 +127,7 @@ func List(db *sqlx.DB, opts ListOpts) ([]Task, error) {
 		query += ` AND status = ?`
 		args = append(args, opts.Status)
 	} else if !opts.All {
-		query += ` AND status IN ('open', 'in_progress')`
+		query += ` AND status IN ('open', 'ready', 'in_progress')`
 	}
 	if opts.Assignee != "" {
 		query += ` AND assignee = ?`
