@@ -14,6 +14,7 @@ const (
 	StatusOpen       Status = "open"
 	StatusReady      Status = "ready"
 	StatusInProgress Status = "in_progress"
+	StatusInReview   Status = "in_review"
 	StatusDone       Status = "done"
 	StatusCancelled  Status = "cancelled"
 )
@@ -127,7 +128,7 @@ func List(db *sqlx.DB, opts ListOpts) ([]Task, error) {
 		query += ` AND status = ?`
 		args = append(args, opts.Status)
 	} else if !opts.All {
-		query += ` AND status IN ('open', 'ready', 'in_progress')`
+		query += ` AND status IN ('open', 'ready', 'in_progress', 'in_review')`
 	}
 	if opts.Assignee != "" {
 		query += ` AND assignee = ?`
