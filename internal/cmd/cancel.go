@@ -11,12 +11,20 @@ func newCancelCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "cancel <id> [id...]",
 		Short: "Mark one or more tasks as cancelled",
+		Long: `Mark one or more tasks as cancelled.
+
+Each ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			status := task.StatusCancelled
 			var last *task.Task
-			for _, id := range args {
-				t, err := task.Update(db, id, task.UpdateOpts{Status: &status})
+			for _, rawID := range args {
+				qt, err := resolveTask(rawID)
+				if err != nil {
+					return err
+				}
+				t, err := task.Update(qt.database, qt.id, task.UpdateOpts{Status: &status})
+				qt.Close()
 				if err != nil {
 					return err
 				}

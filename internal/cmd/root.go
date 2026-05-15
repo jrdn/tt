@@ -25,6 +25,7 @@ func NewRoot(database *sqlx.DB) *cobra.Command {
 	root.AddCommand(
 		newAddCmd(),
 		newLsCmd(),
+		newGlobalOverviewCmd(),
 		newShowCmd(),
 		newDoneCmd(),
 		newUpdateCmd(),

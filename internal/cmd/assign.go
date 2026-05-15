@@ -11,10 +11,18 @@ func newAssignCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "assign <id> <handle>",
 		Short: "Assign a task to a handle",
+		Long: `Assign a task to a handle.
+
+The ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			qt, err := resolveTask(args[0])
+			if err != nil {
+				return err
+			}
+			defer qt.Close()
 			handle := args[1]
-			t, err := task.Update(db, args[0], task.UpdateOpts{Assignee: &handle})
+			t, err := task.Update(qt.database, qt.id, task.UpdateOpts{Assignee: &handle})
 			if err != nil {
 				return err
 			}

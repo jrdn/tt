@@ -22,6 +22,9 @@ func newUpdateCmd() *cobra.Command {
 		Use:     "update <id> [id...]",
 		Aliases: []string{"u"},
 		Short:   "Update fields on one or more tasks",
+		Long: `Update fields on one or more tasks.
+
+Each ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := task.UpdateOpts{}
@@ -50,8 +53,13 @@ func newUpdateCmd() *cobra.Command {
 			}
 
 			var last *task.Task
-			for _, id := range args {
-				t, err := task.Update(db, id, opts)
+			for _, rawID := range args {
+				qt, err := resolveTask(rawID)
+				if err != nil {
+					return err
+				}
+				t, err := task.Update(qt.database, qt.id, opts)
+				qt.Close()
 				if err != nil {
 					return err
 				}

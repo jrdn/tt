@@ -13,16 +13,27 @@ func newShowCmd() *cobra.Command {
 		Use:     "show <id>",
 		Aliases: []string{"s"},
 		Short:   "Show full task details",
+		Long: `Show full task details.
+
+The ID can be a plain task ID (resolved in the current repo's database)
+or a qualified ID in the form <db_name>.<task_id> to look up in a
+specific database (e.g. "myrepo.a3B7xK").`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			t, err := task.Get(db, args[0])
+			qt, err := resolveTask(args[0])
+			if err != nil {
+				return err
+			}
+			defer qt.Close()
+
+			t, err := task.Get(qt.database, qt.id)
 			if err != nil {
 				return err
 			}
 
-			subtasks, _ := task.List(db, task.ListOpts{ParentID: t.ID})
-			rels, _ := task.GetRelations(db, t.ID)
-			comments, _ := task.GetComments(db, t.ID)
+			subtasks, _ := task.List(qt.database, task.ListOpts{ParentID: t.ID})
+			rels, _ := task.GetRelations(qt.database, t.ID)
+			comments, _ := task.GetComments(qt.database, t.ID)
 
 			if jsonOutput {
 				return printJSON(struct {

@@ -12,6 +12,10 @@ func newRelateCmd() *cobra.Command {
 		Use:     "relate <from-id> <type> <to-id>",
 		Aliases: []string{"r"},
 		Short:   "Add a relation between tasks (blocks, duplicates, related)",
+		Long: `Add a relation between tasks.
+
+Each ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).
+Cross-database relations are not supported — both tasks must be in the same database.`,
 		Args:  cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			relType := args[1]
@@ -20,15 +24,28 @@ func newRelateCmd() *cobra.Command {
 			default:
 				return fmt.Errorf("unknown relation type %q (use: blocks, duplicates, related)", relType)
 			}
-			from, err := task.Get(db, args[0])
+
+			fromQt, err := resolveTask(args[0])
 			if err != nil {
 				return fmt.Errorf("from: %w", err)
 			}
-			to, err := task.Get(db, args[2])
+			defer fromQt.Close()
+
+			toQt, err := resolveTask(args[2])
 			if err != nil {
 				return fmt.Errorf("to: %w", err)
 			}
-			if err := task.AddRelation(db, args[0], relType, args[2]); err != nil {
+			defer toQt.Close()
+
+			from, err := task.Get(fromQt.database, fromQt.id)
+			if err != nil {
+				return fmt.Errorf("from: %w", err)
+			}
+			to, err := task.Get(toQt.database, toQt.id)
+			if err != nil {
+				return fmt.Errorf("to: %w", err)
+			}
+			if err := task.AddRelation(fromQt.database, fromQt.id, relType, toQt.id); err != nil {
 				return err
 			}
 			if jsonOutput {

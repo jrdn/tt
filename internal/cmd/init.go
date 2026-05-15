@@ -163,9 +163,15 @@ func resolveTargetFiles() []string {
 	var found []string
 	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
 		p := filepath.Join(root, name)
-		if _, err := os.Stat(p); err == nil {
-			found = append(found, p)
+		if _, err := os.Stat(p); err != nil {
+			continue
 		}
+		if name == "CLAUDE.md" {
+			if data, err := os.ReadFile(p); err == nil && strings.Contains(string(data), "@AGENTS.md") {
+				continue
+			}
+		}
+		found = append(found, p)
 	}
 	if len(found) == 0 {
 		return []string{filepath.Join(root, "AGENTS.md")}

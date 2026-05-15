@@ -16,9 +16,18 @@ func newEditCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "edit <id>",
 		Short: "Edit a task in $EDITOR",
+		Long: `Edit a task in $EDITOR.
+
+The ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			t, err := task.Get(db, args[0])
+			qt, err := resolveTask(args[0])
+			if err != nil {
+				return err
+			}
+			defer qt.Close()
+
+			t, err := task.Get(qt.database, qt.id)
 			if err != nil {
 				return err
 			}
@@ -58,7 +67,7 @@ func newEditCmd() *cobra.Command {
 			}
 
 			updated.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-			if err := task.Save(db, updated); err != nil {
+			if err := task.Save(qt.database, updated); err != nil {
 				return err
 			}
 

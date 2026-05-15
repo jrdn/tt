@@ -15,8 +15,17 @@ func newCommentCmd() *cobra.Command {
 		Use:     "comment <id> <body>",
 		Aliases: []string{"c"},
 		Short:   "Add a comment to a task",
+		Long: `Add a comment to a task.
+
+The ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			qt, err := resolveTask(args[0])
+			if err != nil {
+				return err
+			}
+			defer qt.Close()
+
 			if author == "" {
 				if u, err := user.Current(); err == nil {
 					author = u.Username
@@ -26,7 +35,7 @@ func newCommentCmd() *cobra.Command {
 			if author != "" {
 				authorPtr = &author
 			}
-			c, err := task.AddComment(db, args[0], args[1], authorPtr)
+			c, err := task.AddComment(qt.database, qt.id, args[1], authorPtr)
 			if err != nil {
 				return err
 			}
