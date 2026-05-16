@@ -9,27 +9,37 @@ import (
 
 func newAssignCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "assign <id> <handle>",
-		Short: "Assign a task to a handle",
-		Long: `Assign a task to a handle.
+		Use:   "assign <handle> <id> [id...]",
+		Short: "Assign one or more tasks to a handle",
+		Long: `Assign one or more tasks to a handle.
 
-The ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
-		Args:  cobra.ExactArgs(2),
+Each ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
+		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			qt, err := resolveTask(args[0])
-			if err != nil {
-				return err
-			}
-			defer qt.Close()
-			handle := args[1]
-			t, err := task.Update(qt.database, qt.id, task.UpdateOpts{Assignee: &handle})
-			if err != nil {
-				return err
+			handle := args[0]
+			var tasks []any
+			for _, id := range args[1:] {
+				qt, err := resolveTask(id)
+				if err != nil {
+					return err
+				}
+				t, err := task.Update(qt.database, qt.id, task.UpdateOpts{Assignee: &handle})
+				qt.Close()
+				if err != nil {
+					return err
+				}
+				if jsonOutput {
+						tasks = append(tasks, t)
+				} else {
+					fmt.Printf("%s assigned to %s\n", t.ID, handle)
+				}
 			}
 			if jsonOutput {
-				return printJSON(t)
+				if len(tasks) == 1 {
+					return printJSON(tasks[0])
+				}
+				return printJSON(tasks)
 			}
-			fmt.Printf("%s assigned to %s\n", t.ID, handle)
 			return nil
 		},
 	}
