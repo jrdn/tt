@@ -66,6 +66,11 @@ func newLsCmd() *cobra.Command {
 					assignee = color.New(color.FgHiBlack).Sprint("  @" + *t.Assignee)
 				}
 
+				parent := ""
+				if t.ParentID != nil {
+					parent = color.New(color.FgHiBlack).Sprint("  ↳ " + *t.ParentID)
+				}
+
 				p := t.Priority
 				if p < 0 || p > 3 {
 					p = 2
@@ -78,12 +83,13 @@ func newLsCmd() *cobra.Command {
 				}
 				statusStr := sc.Sprintf("%-13s", string(t.Status))
 
-				fmt.Printf("%-6s  %s  %s  %s%s\n",
+				fmt.Printf("%-6s  %s  %s  %s%s%s\n",
 					t.ID,
 					priLabel,
 					statusStr,
 					t.Title,
 					assignee,
+					parent,
 				)
 			}
 			return nil

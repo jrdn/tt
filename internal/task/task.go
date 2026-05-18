@@ -137,8 +137,6 @@ func List(db *sqlx.DB, opts ListOpts) ([]Task, error) {
 	if opts.ParentID != "" {
 		query += ` AND parent_id LIKE ? || '%'`
 		args = append(args, opts.ParentID)
-	} else {
-		query += ` AND parent_id IS NULL`
 	}
 	query += ` ORDER BY priority ASC, created_at ASC`
 

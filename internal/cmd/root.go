@@ -40,6 +40,7 @@ func NewRoot(database *sqlx.DB) *cobra.Command {
 		newCancelCmd(),
 		newReopenCmd(),
 		newUnrelateCmd(),
+		newGraphCmd(),
 	)
 
 	return root
