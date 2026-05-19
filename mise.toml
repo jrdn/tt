@@ -28,8 +28,7 @@ run = "go vet ./..."
 [tasks.install]
 description = "Install tt to ~/.local/bin and GOBIN"
 run = [
-    "go build -o tt ./cmd/tt",
-    "cp -f tt $HOME/.local/bin/tt",
-    "GOBIN=$(go env GOBIN)",
-    "cp -f tt \"${GOBIN:-$(go env GOPATH)/bin}/tt\"",
+  "go build -o tt ./cmd/tt",
+  "mkdir -p $HOME/.local/bin",
+  "cp -f tt $HOME/.local/bin/tt",
 ]
