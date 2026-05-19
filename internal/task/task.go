@@ -2,6 +2,8 @@ package task
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -207,15 +209,98 @@ func Save(db *sqlx.DB, t *Task) error {
 	return err
 }
 
+// fuzzyScore returns (matched, score). Higher score = better match.
+// A substring match outscores a fuzzy subsequence match; gaps between
+// matched characters reduce the score.
+func fuzzyScore(pattern, text string) (bool, int) {
+	p := strings.ToLower(pattern)
+	t := strings.ToLower(text)
+	if strings.Contains(t, p) {
+		return true, len(p)*10 + 100
+	}
+	pr := []rune(p)
+	pi := 0
+	score := 0
+	prev := -1
+	for i, c := range t {
+		if pi < len(pr) && c == pr[pi] {
+			pi++
+			if prev >= 0 {
+				score -= i - prev - 1
+			}
+			prev = i
+		}
+	}
+	if pi == len(pr) {
+		return true, score
+	}
+	return false, 0
+}
+
 func Search(db *sqlx.DB, query string) ([]Task, error) {
-	q := "%" + query + "%"
-	var tasks []Task
-	err := db.Select(&tasks, `
-		SELECT DISTINCT t.* FROM tasks t
-		LEFT JOIN comments c ON c.task_id = t.id
-		WHERE t.title LIKE ? OR t.description LIKE ? OR c.body LIKE ?
-		ORDER BY t.priority ASC, t.created_at ASC`, q, q, q)
-	return tasks, err
+	var all []Task
+	if err := db.Select(&all, `SELECT * FROM tasks`); err != nil {
+		return nil, err
+	}
+
+	type entry struct {
+		task  Task
+		score int
+	}
+	var results []entry
+
+	for _, t := range all {
+		matched := false
+		score := 0
+
+		if ok, s := fuzzyScore(query, t.Title); ok {
+			s += 100
+			if !matched || s > score {
+				score = s
+			}
+			matched = true
+		}
+		if t.Description != nil {
+			if ok, s := fuzzyScore(query, *t.Description); ok {
+				s += 50
+				if !matched || s > score {
+					score = s
+				}
+				matched = true
+			}
+		}
+
+		var comments []Comment
+		_ = db.Select(&comments, `SELECT * FROM comments WHERE task_id=?`, t.ID)
+		for _, c := range comments {
+			if ok, s := fuzzyScore(query, c.Body); ok {
+				if !matched || s > score {
+					score = s
+				}
+				matched = true
+			}
+		}
+
+		if matched {
+			results = append(results, entry{t, score})
+		}
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].score != results[j].score {
+			return results[i].score > results[j].score
+		}
+		if results[i].task.Priority != results[j].task.Priority {
+			return results[i].task.Priority < results[j].task.Priority
+		}
+		return results[i].task.CreatedAt < results[j].task.CreatedAt
+	})
+
+	out := make([]Task, len(results))
+	for i, r := range results {
+		out[i] = r.task
+	}
+	return out, nil
 }
 
 func AddComment(db *sqlx.DB, taskPrefix, body string, author *string) (*Comment, error) {
