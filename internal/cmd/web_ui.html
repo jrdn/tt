@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>tt</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px;
+  background: #f3f4f6;
+  color: #111827;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ── Header ── */
+header {
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 18px;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  flex-shrink: 0;
+}
+header h1 {
+  font-family: monospace;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -1px;
+  color: #cba6f7;
+}
+
+/* ── Layout ── */
+.layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Sidebar ── */
+aside {
+  width: 290px;
+  background: #fff;
+  border-right: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+.filter-strip {
+  padding: 8px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.filter-btn {
+  padding: 4px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 20px;
+  background: none;
+  font-size: 11px;
+  font-family: inherit;
+  color: #6b7280;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.1s;
+}
+.filter-btn:hover { background: #f9fafb; color: #111827; }
+.filter-btn.active { background: #4f46e5; border-color: #4f46e5; color: #fff; }
+
+.task-list { flex: 1; overflow-y: auto; list-style: none; }
+.task-item {
+  padding: 10px 14px;
+  border-bottom: 1px solid #f3f4f6;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.task-item:hover { background: #f9fafb; }
+.task-item.active { background: #eff6ff; border-left: 3px solid #4f46e5; padding-left: 11px; }
+.task-item-title { font-size: 13px; font-weight: 500; line-height: 1.4; margin-bottom: 5px; }
+.task-item-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+
+/* ── Badges & indicators ── */
+.badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+}
+.pri { font-size: 11px; font-weight: 700; }
+.id-chip { font-family: monospace; font-size: 10px; color: #d1d5db; }
+.parent-ref { font-family: monospace; font-size: 10px; color: #9ca3af; }
+
+/* ── Main ── */
+main {
+  flex: 1;
+  overflow-y: auto;
+  background: #f3f4f6;
+}
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #9ca3af;
+  font-size: 14px;
+}
+
+/* ── Task detail ── */
+.task-detail {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 28px 32px 80px;
+}
+.detail-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.detail-title {
+  font-size: 22px;
+  font-weight: 700;
+  flex: 1;
+  line-height: 1.3;
+}
+.status-select {
+  -webkit-appearance: none;
+  appearance: none;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 10px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  flex-shrink: 0;
+  margin-top: 5px;
+}
+
+/* ── Meta grid ── */
+.meta-grid {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  row-gap: 6px;
+  column-gap: 10px;
+  font-size: 12px;
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  margin-bottom: 24px;
+}
+.meta-label { color: #9ca3af; font-weight: 500; white-space: nowrap; padding-top: 1px; }
+.meta-value { color: #374151; }
+.meta-mono { font-family: monospace; font-size: 12px; }
+.meta-link {
+  color: #4f46e5;
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 12px;
+  background: none;
+  border: none;
+  padding: 0;
+  text-decoration: underline;
+}
+.meta-link:hover { color: #4338ca; }
+.editable-input {
+  background: none;
+  border: none;
+  border-bottom: 1px dashed #e5e7eb;
+  font-size: 12px;
+  font-family: monospace;
+  color: #374151;
+  padding: 0 2px 1px;
+  outline: none;
+  width: 220px;
+  cursor: text;
+}
+.editable-input:focus { border-bottom-color: #4f46e5; }
+
+/* ── Sections ── */
+.section { margin-bottom: 24px; }
+.section-heading {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #9ca3af;
+  margin-bottom: 8px;
+}
+
+/* ── Description / markdown body ── */
+.md-body {
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.75;
+}
+.md-body p { margin-bottom: 0.8em; }
+.md-body p:last-child { margin-bottom: 0; }
+.md-body h1,.md-body h2,.md-body h3 { font-weight: 700; margin: 1em 0 0.4em; }
+.md-body ul,.md-body ol { margin: 0 0 0.8em 1.6em; }
+.md-body li { margin-bottom: 0.2em; }
+.md-body code { background: #f3f4f6; padding: 1px 5px; border-radius: 3px; font-size: 12px; font-family: monospace; }
+.md-body pre { background: #1e1e2e; color: #cdd6f4; padding: 14px 16px; border-radius: 6px; overflow-x: auto; margin-bottom: 0.8em; }
+.md-body pre code { background: none; padding: 0; color: inherit; font-size: 12px; }
+.md-body blockquote { border-left: 3px solid #e5e7eb; padding-left: 12px; color: #6b7280; margin-bottom: 0.8em; }
+.md-body a { color: #4f46e5; }
+.md-body table { border-collapse: collapse; width: 100%; margin-bottom: 0.8em; }
+.md-body th,.md-body td { border: 1px solid #e5e7eb; padding: 6px 10px; text-align: left; }
+.md-body th { background: #f9fafb; font-weight: 600; }
+.md-body hr { border: none; border-top: 1px solid #e5e7eb; margin: 1em 0; }
+
+/* ── List items (subtasks / relations) ── */
+.list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: border-color 0.1s;
+}
+.list-item:hover { border-color: #4f46e5; }
+.list-item-title { flex: 1; }
+.rel-type { font-size: 11px; color: #9ca3af; font-weight: 500; min-width: 80px; }
+.none-text { font-size: 12px; color: #9ca3af; }
+
+/* ── Comments ── */
+.comment-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+}
+.comment-meta {
+  font-size: 11px;
+  color: #9ca3af;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.comment-author { font-weight: 600; color: #374151; font-size: 12px; }
+.comment-id { font-family: monospace; font-size: 10px; color: #d1d5db; }
+.comment-body { font-size: 13px; line-height: 1.6; }
+.comment-body p { margin-bottom: 0.5em; }
+.comment-body p:last-child { margin-bottom: 0; }
+.comment-body code { background: #f3f4f6; padding: 1px 5px; border-radius: 3px; font-size: 12px; font-family: monospace; }
+.comment-body pre { background: #1e1e2e; color: #cdd6f4; padding: 12px; border-radius: 6px; overflow-x: auto; margin-bottom: 0.5em; }
+.comment-body pre code { background: none; color: inherit; }
+
+/* ── Add comment ── */
+.add-comment {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-top: 12px;
+}
+.add-comment textarea {
+  width: 100%;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 80px;
+  outline: none;
+  color: #111827;
+  background: #fafafa;
+}
+.add-comment textarea:focus { border-color: #4f46e5; background: #fff; }
+.add-comment-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.author-label { font-size: 11px; color: #9ca3af; }
+.author-input {
+  border: 1px solid #e5e7eb;
+  border-radius: 5px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: monospace;
+  outline: none;
+  width: 160px;
+  color: #374151;
+}
+.author-input:focus { border-color: #4f46e5; }
+.spacer { flex: 1; }
+.btn {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  font-weight: 500;
+}
+.btn-primary { background: #4f46e5; color: #fff; }
+.btn-primary:hover { background: #4338ca; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+</style>
+</head>
+<body>
+<header><h1>tt</h1></header>
+<div class="layout">
+  <aside>
+    <div class="filter-strip" id="filter-strip"></div>
+    <ul class="task-list" id="task-list"></ul>
+  </aside>
+  <main id="main">
+    <div class="empty-state">Select a task to view details</div>
+  </main>
+</div>
+
+<script>
+const STATUS_COLORS = {
+  backlog:     '#9ca3af',
+  open:        '#3b82f6',
+  ready:       '#0ea5e9',
+  in_progress: '#f59e0b',
+  in_review:   '#8b5cf6',
+  done:        '#10b981',
+  cancelled:   '#6b7280',
+};
+const STATUS_LABELS = {
+  backlog:     'Backlog',
+  open:        'Open',
+  ready:       'Ready',
+  in_progress: 'In Progress',
+  in_review:   'In Review',
+  done:        'Done',
+  cancelled:   'Cancelled',
+};
+const ALL_STATUSES  = ['open','ready','in_progress','in_review','backlog','done','cancelled'];
+const PRI_CHARS     = ['●','◕','◑','◔'];
+const PRI_COLORS    = ['#ef4444','#f59e0b','#9ca3af','#d1d5db'];
+const PRI_LABELS    = ['Critical','High','Normal','Low'];
+
+const FILTERS = [
+  {label:'Active',      value:''},
+  {label:'Open',        value:'open'},
+  {label:'Ready',       value:'ready'},
+  {label:'In Progress', value:'in_progress'},
+  {label:'In Review',   value:'in_review'},
+  {label:'Backlog',     value:'backlog'},
+  {label:'Done',        value:'done'},
+  {label:'All',         value:'__all__'},
+];
+
+let currentFilter = '';
+let selectedId    = null;
+
+// ── Utilities ──────────────────────────────────────────────
+function esc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function badge(status) {
+  const color = STATUS_COLORS[status] || '#9ca3af';
+  const label = STATUS_LABELS[status] || status;
+  return `<span class="badge" style="background:${color}">${esc(label)}</span>`;
+}
+
+function priSpan(p) {
+  const i = (p >= 0 && p <= 3) ? p : 2;
+  return `<span class="pri" style="color:${PRI_COLORS[i]}" title="${PRI_LABELS[i]}">${PRI_CHARS[i]}</span>`;
+}
+
+// ── Filters ────────────────────────────────────────────────
+function renderFilters() {
+  document.getElementById('filter-strip').innerHTML = FILTERS.map(f =>
+    `<button class="filter-btn${currentFilter === f.value ? ' active' : ''}"
+             onclick="setFilter(${JSON.stringify(f.value)})">${esc(f.label)}</button>`
+  ).join('');
+}
+
+function setFilter(v) {
+  currentFilter = v;
+  renderFilters();
+  loadTasks();
+}
+
+// ── Task list ──────────────────────────────────────────────
+async function loadTasks() {
+  let url = '/api/tasks';
+  if (currentFilter === '__all__') url += '?all=1';
+  else if (currentFilter !== '')   url += '?status=' + encodeURIComponent(currentFilter);
+
+  try {
+    const res  = await fetch(url);
+    const data = await res.json();
+    renderTaskList(data.tasks || []);
+  } catch (_) {
+    document.getElementById('task-list').innerHTML =
+      '<li style="padding:12px;color:#ef4444;font-size:12px">Failed to load tasks</li>';
+  }
+}
+
+function renderTaskList(tasks) {
+  const ul = document.getElementById('task-list');
+  if (!tasks.length) {
+    ul.innerHTML = '<li style="padding:12px;color:#9ca3af;font-size:12px">No tasks</li>';
+    return;
+  }
+  ul.innerHTML = tasks.map(t => {
+    const parentRef  = t.parent_id ? `<span class="parent-ref">↳ ${esc(t.parent_id)}</span>` : '';
+    const assigneeEl = t.assignee  ? `<span style="font-size:10px;color:#9ca3af">@${esc(t.assignee)}</span>` : '';
+    return `
+      <li class="task-item${t.id === selectedId ? ' active' : ''}" onclick="selectTask('${esc(t.id)}')">
+        <div class="task-item-title">${esc(t.title)}</div>
+        <div class="task-item-meta">
+          ${priSpan(t.priority)}
+          ${badge(t.status)}
+          ${assigneeEl}
+          ${parentRef}
+          <span class="id-chip">${esc(t.id)}</span>
+        </div>
+      </li>`;
+  }).join('');
+}
+
+// ── Task detail ────────────────────────────────────────────
+async function selectTask(id) {
+  selectedId = id;
+  document.querySelectorAll('.task-item').forEach(el => {
+    const chip = el.querySelector('.id-chip');
+    el.classList.toggle('active', chip && chip.textContent.trim() === id);
+  });
+  await loadTask(id);
+}
+
+async function loadTask(id) {
+  try {
+    const res = await fetch('/api/tasks/' + encodeURIComponent(id));
+    if (!res.ok) throw new Error(await res.text());
+    renderTaskDetail(await res.json());
+  } catch (_) {
+    document.getElementById('main').innerHTML =
+      '<div class="empty-state" style="color:#ef4444">Failed to load task</div>';
+  }
+}
+
+function renderTaskDetail(data) {
+  const {task: t, subtasks, relations, comments, description_html} = data;
+  const statusColor  = STATUS_COLORS[t.status] || '#9ca3af';
+  const savedAuthor  = localStorage.getItem('tt-author') || '';
+
+  const statusOpts = ALL_STATUSES.map(s =>
+    `<option value="${s}"${t.status === s ? ' selected' : ''}>${esc(STATUS_LABELS[s] || s)}</option>`
+  ).join('');
+
+  const metaRows = [
+    ['ID',         `<span class="meta-mono">${esc(t.id)}</span>`],
+    ['Priority',   `${priSpan(t.priority)} <span style="font-size:12px;color:#374151">${esc(PRI_LABELS[t.priority] ?? '')}</span>`],
+    ['Assignee',   `<input class="editable-input" id="assignee-inp" type="text"
+                           value="${esc(t.assignee || '')}" placeholder="unassigned"
+                           onblur="updateAssignee('${esc(t.id)}', this.value)">`],
+    t.due_date   ? ['Due',        `<span class="meta-mono">${esc(t.due_date)}</span>`] : null,
+    t.parent_id  ? ['Parent',     `<button class="meta-link" onclick="selectTask('${esc(t.parent_id)}')">${esc(t.parent_id)}</button>`] : null,
+    t.created_by ? ['Created by', `<span class="meta-mono">${esc(t.created_by)}</span>`] : null,
+    ['Created',    `<span class="meta-mono">${esc(t.created_at.slice(0,10))}</span>`],
+    ['Updated',    `<span class="meta-mono">${esc(t.updated_at.slice(0,10))}</span>`],
+    t.closed_at  ? ['Closed',     `<span class="meta-mono">${esc(t.closed_at.slice(0,10))}</span>`] : null,
+  ].filter(Boolean).map(([k, v]) =>
+    `<div class="meta-label">${esc(k)}</div><div class="meta-value">${v}</div>`
+  ).join('');
+
+  const subtasksHtml = subtasks.length
+    ? subtasks.map(s => `
+        <div class="list-item" onclick="selectTask('${esc(s.id)}')">
+          ${priSpan(s.priority)} ${badge(s.status)}
+          <span class="list-item-title">${esc(s.title)}</span>
+          <span class="id-chip">${esc(s.id)}</span>
+        </div>`).join('')
+    : '<div class="none-text">None</div>';
+
+  const relsHtml = relations.length
+    ? relations.map(r => {
+        const isFrom  = r.from_id === t.id;
+        const relType = isFrom ? r.type : inverseRelType(r.type);
+        const otherId = isFrom ? r.to_id : r.from_id;
+        return `
+          <div class="list-item" onclick="selectTask('${esc(otherId)}')">
+            <span class="rel-type">${esc(relType)}</span>
+            <span class="list-item-title"></span>
+            <span class="meta-mono" style="color:#374151">${esc(otherId)}</span>
+          </div>`;
+      }).join('')
+    : '<div class="none-text">None</div>';
+
+  const commentsHtml = comments.map(c => `
+    <div class="comment-card">
+      <div class="comment-meta">
+        <span class="comment-author">${esc(c.author || '—')}</span>
+        <span>${esc(c.created_at.slice(0,10))}</span>
+        <span class="comment-id">${esc(c.id)}</span>
+      </div>
+      <div class="comment-body">${c.body_html}</div>
+    </div>`).join('');
+
+  document.getElementById('main').innerHTML = `
+    <div class="task-detail">
+      <div class="detail-header">
+        <div class="detail-title">${esc(t.title)}</div>
+        <select class="status-select" id="status-sel" style="background:${statusColor}"
+                onchange="updateStatus('${esc(t.id)}', this)">
+          ${statusOpts}
+        </select>
+      </div>
+
+      <div class="meta-grid">${metaRows}</div>
+
+      ${description_html ? `
+        <div class="section">
+          <div class="section-heading">Description</div>
+          <div class="md-body">${description_html}</div>
+        </div>` : ''}
+
+      <div class="section">
+        <div class="section-heading">Subtasks (${subtasks.length})</div>
+        ${subtasksHtml}
+      </div>
+
+      <div class="section">
+        <div class="section-heading">Relations (${relations.length})</div>
+        ${relsHtml}
+      </div>
+
+      <div class="section">
+        <div class="section-heading">Comments (${comments.length})</div>
+        ${commentsHtml}
+        <div class="add-comment">
+          <textarea id="comment-body" placeholder="Add a comment… (markdown supported)"></textarea>
+          <div class="add-comment-footer">
+            <span class="author-label">Author:</span>
+            <input class="author-input" id="comment-author" type="text"
+                   placeholder="your-handle" value="${esc(savedAuthor)}">
+            <div class="spacer"></div>
+            <button class="btn btn-primary" onclick="submitComment('${esc(t.id)}')">Add Comment</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ── Mutations ──────────────────────────────────────────────
+async function updateStatus(id, select) {
+  const status = select.value;
+  select.style.background = STATUS_COLORS[status] || '#9ca3af';
+  await fetch('/api/tasks/' + encodeURIComponent(id), {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({status}),
+  });
+  loadTasks();
+}
+
+async function updateAssignee(id, value) {
+  const v = value.trim();
+  if (!v) return;
+  await fetch('/api/tasks/' + encodeURIComponent(id), {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({assignee: v}),
+  });
+  loadTasks();
+}
+
+async function submitComment(id) {
+  const bodyEl   = document.getElementById('comment-body');
+  const authorEl = document.getElementById('comment-author');
+  const body     = bodyEl.value.trim();
+  const author   = authorEl.value.trim();
+  if (!body) return;
+
+  if (author) localStorage.setItem('tt-author', author);
+
+  const btn = document.querySelector('#main .btn-primary');
+  if (btn) btn.disabled = true;
+
+  await fetch('/api/tasks/' + encodeURIComponent(id) + '/comments', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({body, author: author || null}),
+  });
+  await loadTask(id);
+}
+
+function inverseRelType(t) {
+  if (t === 'blocks')     return 'blocked by';
+  if (t === 'duplicates') return 'duplicated by';
+  return t;
+}
+
+// ── Boot ───────────────────────────────────────────────────
+renderFilters();
+loadTasks();
+</script>
+</body>
+</html>

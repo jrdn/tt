@@ -58,6 +58,8 @@ tt update <id> --assignee <handle>          # reassign
 tt comment <id> "note"                      # append progress note without editing description
 tt relate <id> blocks <id>                  # link tasks (blocks | duplicates | related)
 tt edit <id>                                # edit task in $EDITOR
+tt web                                      # start local web UI (default :8080)
+tt web --port 9090                          # custom port
 ```
 
 ### Notes for Agents
