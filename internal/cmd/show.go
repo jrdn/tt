@@ -2,11 +2,29 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
+	"github.com/charmbracelet/glamour"
 	"github.com/jrdn/tt/internal/task"
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
+
+func renderMarkdown(s string) string {
+	if !isatty.IsTerminal(os.Stdout.Fd()) {
+		return s
+	}
+	r, err := glamour.NewTermRenderer(glamour.WithAutoStyle(), glamour.WithWordWrap(100))
+	if err != nil {
+		return s
+	}
+	out, err := r.Render(s)
+	if err != nil {
+		return s
+	}
+	return out
+}
 
 func newShowCmd() *cobra.Command {
 	return &cobra.Command{
@@ -66,7 +84,8 @@ specific database (e.g. "myrepo.a3B7xK").`,
 				fmt.Printf("Closed:  %s\n", *t.ClosedAt)
 			}
 			if t.Description != nil && *t.Description != "" {
-				fmt.Printf("\n%s\n", *t.Description)
+				fmt.Print("\n")
+				fmt.Print(renderMarkdown(*t.Description))
 			}
 
 			if len(subtasks) > 0 {
@@ -94,7 +113,11 @@ specific database (e.g. "myrepo.a3B7xK").`,
 					if c.Author != nil {
 						author = *c.Author
 					}
-					fmt.Printf("  [%s] [%s] %s: %s\n", c.ID, c.CreatedAt[:10], author, c.Body)
+					fmt.Printf("  [%s] [%s] %s:\n", c.ID, c.CreatedAt[:10], author)
+					rendered := renderMarkdown(c.Body)
+					for _, line := range strings.Split(strings.TrimRight(rendered, "\n"), "\n") {
+						fmt.Printf("  %s\n", line)
+					}
 				}
 			}
 
