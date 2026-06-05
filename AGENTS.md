@@ -6,6 +6,7 @@ This project uses **tt** for task tracking. Tasks live in a local SQLite databas
 
 ```bash
 tt prime                                     # orientation: open/in-progress tasks and ready work
+tt next                                      # claim and display your next ready task (exit 1 when done)
 tt ls                                        # list open tasks
 tt ls --status=ready                        # unblocked tasks ready to pick up
 tt ls --status=in_progress                  # filter by status
@@ -44,6 +45,21 @@ tt c <id> "implemented auth middleware on branch feat/auth (a3f2c1b); still need
 ```
 
 Before ending a session on an in-progress task, always leave a comment summarizing the current state. `tt show <id>` is the first thing a resuming agent should run.
+
+### Work Loop
+
+To work through your task queue autonomously:
+
+1. Run `tt next --as <your-handle>` — atomically claims and displays your next ready task. Exits 1 when the queue is empty or all tasks are blocked.
+2. Do the work. Comment progress with `tt comment <id> "..." --author <your-handle>`.
+3. Run `tt update <id> --status=in_review` when done (not `done` — that's for human sign-off).
+4. Repeat until `tt next` exits 1.
+
+Configure your default handle once so `tt next` and `tt claim` don't need `--as`:
+
+```bash
+git config tt.handle claude/sonnet-4.6   # or: codex, opencode, lmstudio/qwen3-coder, etc.
+```
 
 ### Sync
 
