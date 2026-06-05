@@ -5,7 +5,9 @@ This project uses **tt** for task tracking. Tasks live in a local SQLite databas
 ### Key Commands
 
 ```bash
+tt prime                                     # orientation: open/in-progress tasks and ready work
 tt ls                                        # list open tasks
+tt ls --status=ready                        # unblocked tasks ready to pick up
 tt ls --status=in_progress                  # filter by status
 tt add "title"                              # create a task
 tt add "title" --assignee claude/opus4.7   # assign on create
@@ -13,7 +15,9 @@ tt show <id>                                # full detail: subtasks, relations, 
 tt done <id>                                # mark done
 tt update <id> --status=in_progress         # update any field
 tt update <id> --assignee <handle>          # reassign
+tt claim <id>                               # set in_progress and assign to yourself
 tt comment <id> "note"                      # append progress note without editing description
+tt search "query"                           # fuzzy search across titles, descriptions, comments
 tt relate <id> blocks <id>                  # link tasks (blocks | duplicates | related)
 ```
 
@@ -23,7 +27,7 @@ tt relate <id> blocks <id>                  # link tasks (blocks | duplicates | 
 - IDs are short 4-char base32 hashes. Prefix matching is supported — `tt show ab` works if unambiguous.
 - `--assignee` accepts free-form handles: `jrdn`, `claude/opus4.7`, `lmstudio/qwen3-coder`.
 - Use `tt comment` to log reasoning and progress without overwriting the description. Always pass `--author` to identify yourself (e.g. `--author claude/opus4.7`, `--author cursor/claude-sonnet`) — default falls back to OS username, which is not meaningful for agents.
-- Priority: 0=critical, 1=high, 2=normal (default), 3=low, 4=backlog.
+- Priority: 0=critical, 1=high, 2=normal (default), 3=low.
 
 ### Resumability
 
