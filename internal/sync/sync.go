@@ -1,0 +1,375 @@
+package sync
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/jrdn/tt/internal/config"
+)
+
+// Backend defines the interface for a sync backend.
+type Backend interface {
+	Push(ctx context.Context, localPath string) error
+	Pull(ctx context.Context, localPath string) error
+}
+
+// NewBackend creates a sync backend based on the config.
+func NewBackend(cfg *config.SyncConfig) (Backend, error) {
+	switch cfg.Type {
+	case config.BackendDirectory:
+		return NewDirectoryBackend(cfg), nil
+	case config.BackendSCP:
+		return NewSCPBackend(cfg), nil
+	case config.BackendS3:
+		return NewS3Backend(cfg), nil
+	case config.BackendGitLFS:
+		return NewGitLFSBackend(cfg), nil
+	default:
+		return nil, fmt.Errorf("unknown sync backend type: %q", cfg.Type)
+	}
+}
+
+// DirectoryBackend copies the database file to/from a local directory.
+type DirectoryBackend struct {
+	path string
+}
+
+func NewDirectoryBackend(cfg *config.SyncConfig) *DirectoryBackend {
+	return &DirectoryBackend{path: cfg.Path}
+}
+
+func (b *DirectoryBackend) Push(ctx context.Context, localPath string) error {
+	if err := os.MkdirAll(b.path, 0755); err != nil {
+		return fmt.Errorf("create sync directory: %w", err)
+	}
+	dest := filepath.Join(b.path, filepath.Base(localPath))
+	destWal := dest + "-wal"
+	destShm := dest + "-shm"
+
+	if err := copyFile(localPath, dest); err != nil {
+		return fmt.Errorf("copy db: %w", err)
+	}
+	// Also copy WAL and SHM files if they exist
+	copyIfExists(localPath+"-wal", destWal)
+	copyIfExists(localPath+"-shm", destShm)
+	return nil
+}
+
+func (b *DirectoryBackend) Pull(ctx context.Context, localPath string) error {
+	src := filepath.Join(b.path, filepath.Base(localPath))
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		return fmt.Errorf("remote db not found at %q", src)
+	}
+	srcWal := src + "-wal"
+	srcShm := src + "-shm"
+
+	if err := copyFile(src, localPath); err != nil {
+		return fmt.Errorf("copy db: %w", err)
+	}
+	copyIfExists(srcWal, localPath+"-wal")
+	copyIfExists(srcShm, localPath+"-shm")
+	return nil
+}
+
+// SCPBackend copies the database file to/from a remote host via scp.
+type SCPBackend struct {
+	host       string
+	user       string
+	port       int
+	remotePath string
+}
+
+func NewSCPBackend(cfg *config.SyncConfig) *SCPBackend {
+	port := cfg.Port
+	if port == 0 {
+		port = 22
+	}
+	return &SCPBackend{
+		host:       cfg.Host,
+		user:       cfg.User,
+		port:       port,
+		remotePath: cfg.RemotePath,
+	}
+}
+
+func (b *SCPBackend) remoteAddr() string {
+	addr := b.host
+	if b.user != "" {
+		addr = b.user + "@" + b.host
+	}
+	return addr
+}
+
+func (b *SCPBackend) Push(ctx context.Context, localPath string) error {
+	remoteDest := b.remoteAddr() + ":" + b.remotePath
+	args := []string{"-P", fmt.Sprintf("%d", b.port), localPath, remoteDest}
+	cmd := exec.CommandContext(ctx, "scp", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("scp push failed: %w\n%s", err, string(out))
+	}
+	return nil
+}
+
+func (b *SCPBackend) Pull(ctx context.Context, localPath string) error {
+	remoteSrc := b.remoteAddr() + ":" + b.remotePath
+	args := []string{"-P", fmt.Sprintf("%d", b.port), remoteSrc, localPath}
+	cmd := exec.CommandContext(ctx, "scp", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("scp pull failed: %w\n%s", err, string(out))
+	}
+	return nil
+}
+
+// S3Backend uploads/downloads the database file to/from an S3 bucket.
+// Uses the AWS CLI.
+type S3Backend struct {
+	bucket    string
+	region    string
+	accessKey string
+	secretKey string
+	endpoint  string
+}
+
+func NewS3Backend(cfg *config.SyncConfig) *S3Backend {
+	return &S3Backend{
+		bucket:    cfg.Bucket,
+		region:    cfg.Region,
+		accessKey: cfg.AccessKey,
+		secretKey: cfg.SecretKey,
+		endpoint:  cfg.Endpoint,
+	}
+}
+
+func (b *S3Backend) s3Path(filename string) string {
+	return "s3://" + b.bucket + "/" + filepath.Base(filename)
+}
+
+func (b *S3Backend) awsArgs() []string {
+	args := []string{"--region", b.region}
+	if b.endpoint != "" {
+		args = append(args, "--endpoint-url", b.endpoint)
+	}
+	return args
+}
+
+func (b *S3Backend) Push(ctx context.Context, localPath string) error {
+	args := append(b.awsArgs(), "s3", "cp", localPath, b.s3Path(localPath))
+	cmd := exec.CommandContext(ctx, "aws", args...)
+	cmd.Env = b.envWithCreds(os.Environ())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("aws s3 cp push failed: %w\n%s", err, string(out))
+	}
+	return nil
+}
+
+func (b *S3Backend) Pull(ctx context.Context, localPath string) error {
+	args := append(b.awsArgs(), "s3", "cp", b.s3Path(localPath), localPath)
+	cmd := exec.CommandContext(ctx, "aws", args...)
+	cmd.Env = b.envWithCreds(os.Environ())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("aws s3 cp pull failed: %w\n%s", err, string(out))
+	}
+	return nil
+}
+
+func (b *S3Backend) envWithCreds(env []string) []string {
+	if b.accessKey == "" || b.secretKey == "" {
+		return env
+	}
+	var result []string
+	for _, e := range env {
+		if strings.HasPrefix(e, "AWS_ACCESS_KEY_ID=") || strings.HasPrefix(e, "AWS_SECRET_ACCESS_KEY=") || strings.HasPrefix(e, "AWS_SESSION_TOKEN=") {
+			continue
+		}
+		result = append(result, e)
+	}
+	result = append(result, "AWS_ACCESS_KEY_ID="+b.accessKey)
+	result = append(result, "AWS_SECRET_ACCESS_KEY="+b.secretKey)
+	return result
+}
+
+// GitLFSBackend pushes/pulls the database file using git and git-lfs
+// on a separate branch.
+type GitLFSBackend struct {
+	branch string
+}
+
+func NewGitLFSBackend(cfg *config.SyncConfig) *GitLFSBackend {
+	branch := cfg.Branch
+	if branch == "" {
+		branch = "tt-sync"
+	}
+	return &GitLFSBackend{branch: branch}
+}
+
+func (b *GitLFSBackend) Push(ctx context.Context, localPath string) error {
+	// Verify git-lfs is installed
+	if _, err := exec.LookPath("git-lfs"); err != nil {
+		return fmt.Errorf("git-lfs is required but not installed: %w", err)
+	}
+
+	filename := filepath.Base(localPath)
+	tmpDir, err := os.MkdirTemp("", "tt-sync-*")
+	if err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Initialize git repo in temp dir
+	if err := runCmd(ctx, tmpDir, "git", "init"); err != nil {
+		return err
+	}
+	if err := runCmd(ctx, tmpDir, "git", "lfs", "install"); err != nil {
+		return err
+	}
+	if err := runCmd(ctx, tmpDir, "git", "config", "user.email", "tt-sync@local"); err != nil {
+		return err
+	}
+	if err := runCmd(ctx, tmpDir, "git", "config", "user.name", "tt sync"); err != nil {
+		return err
+	}
+
+	// Track the db file with lfs
+	if err := runCmd(ctx, tmpDir, "git", "lfs", "track", filename); err != nil {
+		return err
+	}
+	if err := runCmd(ctx, tmpDir, "git", "add", ".gitattributes"); err != nil {
+		return err
+	}
+	if err := runCmd(ctx, tmpDir, "git", "commit", "-m", "init lfs tracking"); err != nil {
+		return err
+	}
+
+	// Copy db file
+	if err := copyFile(localPath, filepath.Join(tmpDir, filename)); err != nil {
+		return err
+	}
+	if err := runCmd(ctx, tmpDir, "git", "add", filename); err != nil {
+		return err
+	}
+	if err := runCmd(ctx, tmpDir, "git", "commit", "-m", "sync push"); err != nil {
+		return err
+	}
+
+	// Find the git root of the calling repo (CWD, not the DB directory).
+	rootOut, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("get git root: %w", err)
+	}
+	gitRoot := strings.TrimSpace(string(rootOut))
+
+	// Create an orphan branch if it doesn't exist, or checkout existing
+	branchExists := runCmd(ctx, gitRoot, "git", "rev-parse", "--verify", b.branch) == nil
+	if branchExists {
+		if err := runCmd(ctx, gitRoot, "git", "fetch", ".", b.branch+":"+b.branch); err != nil {
+			// branch might not exist on remote, that's ok
+		}
+	}
+
+	// Copy files from temp to a worktree and push
+	worktreeDir := filepath.Join(gitRoot, ".git", "tt-sync-worktree")
+	os.RemoveAll(worktreeDir)
+
+	if branchExists {
+		if err := runCmd(ctx, gitRoot, "git", "worktree", "add", "--force", worktreeDir, b.branch); err != nil {
+			return err
+		}
+	} else {
+		if err := runCmd(ctx, gitRoot, "git", "worktree", "add", "--force", "--orphan", "-b", b.branch, worktreeDir); err != nil {
+			return err
+		}
+	}
+	defer runCmd(ctx, gitRoot, "git", "worktree", "remove", "--force", worktreeDir)
+
+	// Set up lfs in worktree
+	runCmd(ctx, worktreeDir, "git", "lfs", "install", "--local")
+
+	// Track and copy
+	runCmd(ctx, worktreeDir, "git", "lfs", "track", filename)
+	runCmd(ctx, worktreeDir, "git", "add", ".gitattributes")
+	if err := copyFile(localPath, filepath.Join(worktreeDir, filename)); err != nil {
+		return err
+	}
+	if err := runCmd(ctx, worktreeDir, "git", "add", filename); err != nil {
+		return err
+	}
+	if err := runCmd(ctx, worktreeDir, "git", "commit", "--allow-empty", "-m", "tt sync push"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (b *GitLFSBackend) Pull(ctx context.Context, localPath string) error {
+	filename := filepath.Base(localPath)
+	rootOut, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("not in a git repo: %w", err)
+	}
+	gitRoot := strings.TrimSpace(string(rootOut))
+
+	// Check if the sync branch exists
+	if err := runCmd(ctx, gitRoot, "git", "rev-parse", "--verify", b.branch); err != nil {
+		return fmt.Errorf("sync branch %q not found", b.branch)
+	}
+
+	// Compute a unique path for the worktree; git worktree add requires
+	// the target to not already exist, so we can't use os.MkdirTemp directly.
+	worktreeDir := filepath.Join(os.TempDir(), fmt.Sprintf("tt-pull-%d", os.Getpid()))
+	defer os.RemoveAll(worktreeDir)
+
+	if err := runCmd(ctx, gitRoot, "git", "worktree", "add", "--force", worktreeDir, b.branch); err != nil {
+		return err
+	}
+	defer runCmd(ctx, gitRoot, "git", "worktree", "remove", "--force", worktreeDir)
+
+	// Pull lfs files
+	runCmd(ctx, worktreeDir, "git", "lfs", "pull")
+
+	// Copy the file back
+	src := filepath.Join(worktreeDir, filename)
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		return fmt.Errorf("db file not found in sync branch")
+	}
+	return copyFile(src, localPath)
+}
+
+// Helper functions
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
+}
+
+func copyIfExists(src, dst string) error {
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		return nil
+	}
+	return copyFile(src, dst)
+}
+
+func runCmd(ctx context.Context, dir, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s %v: %w\n%s", name, args, err, string(out))
+	}
+	return nil
+}

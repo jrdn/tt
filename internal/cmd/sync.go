@@ -1,0 +1,316 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+
+	"github.com/jrdn/tt/internal/config"
+	ttdb "github.com/jrdn/tt/internal/db"
+	ttsync "github.com/jrdn/tt/internal/sync"
+	"github.com/spf13/cobra"
+)
+
+func newSyncCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "sync",
+		Short: "Sync database with a remote backend",
+		Long: `Push or pull the tt database to/from a configured sync backend.
+
+Supported backends:
+  directory  - Copy to/from a local directory (e.g. Dropbox, iCloud)
+  scp        - Copy to/from a remote host via SCP
+  s3         - Upload/download from an S3 bucket
+  git_lfs    - Push/pull via a dedicated git branch with git-lfs
+
+Before pushing, the WAL is checkpointed to ensure a consistent snapshot.
+Before pulling, the database is closed, the file is replaced, and the
+new database is reopened.`,
+	}
+
+	cmd.AddCommand(
+		newSyncPushCmd(),
+		newSyncPullCmd(),
+		newSyncConfigureCmd(),
+	)
+
+	return cmd
+}
+
+func newSyncPushCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "push",
+		Short: "Push local database to the configured sync backend",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			dbName, err := ttdb.RepoDBName()
+			if err != nil {
+				return err
+			}
+
+			syncCfg, err := cfg.GetSyncConfig(dbName)
+			if err != nil {
+				return fmt.Errorf("%w\nRun 'tt sync configure' to set up a sync backend", err)
+			}
+
+			dbPath, err := ttdb.CurrentDBPath()
+			if err != nil {
+				return err
+			}
+
+			// Checkpoint WAL to merge pending frames into the main file,
+			// ensuring a consistent snapshot for the transfer.
+			if err := ttdb.Checkpoint(db); err != nil {
+				return err
+			}
+
+			backend, err := ttsync.NewBackend(syncCfg)
+			if err != nil {
+				return err
+			}
+
+			ctx := context.Background()
+			if err := backend.Push(ctx, dbPath); err != nil {
+				return err
+			}
+
+			if jsonOutput {
+				return printJSON(map[string]string{
+					"status": "pushed",
+					"type":   string(syncCfg.Type),
+				})
+			}
+			fmt.Printf("pushed to %s backend\n", syncCfg.Type)
+			return nil
+		},
+	}
+}
+
+func newSyncPullCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "pull",
+		Short: "Pull database from the configured sync backend",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			dbName, err := ttdb.RepoDBName()
+			if err != nil {
+				return err
+			}
+
+			syncCfg, err := cfg.GetSyncConfig(dbName)
+			if err != nil {
+				return fmt.Errorf("%w\nRun 'tt sync configure' to set up a sync backend", err)
+			}
+
+			dbPath, err := ttdb.CurrentDBPath()
+			if err != nil {
+				return err
+			}
+
+			backend, err := ttsync.NewBackend(syncCfg)
+			if err != nil {
+				return err
+			}
+
+			ctx := context.Background()
+
+			// Pull into a temp dir that holds a file with the same basename
+			// as the real DB — backends derive the remote filename from
+			// filepath.Base(localPath), so the name must match.
+			stagingDir, err := os.MkdirTemp(filepath.Dir(dbPath), ".tt-pull-*")
+			if err != nil {
+				return fmt.Errorf("create staging dir: %w", err)
+			}
+			tmpPath := filepath.Join(stagingDir, filepath.Base(dbPath))
+			defer os.RemoveAll(stagingDir)
+
+			// Download to the temp file
+			if err := backend.Pull(ctx, tmpPath); err != nil {
+				return err
+			}
+
+			// Checkpoint current DB to ensure clean state before swap
+			if err := ttdb.Checkpoint(db); err != nil {
+				os.Remove(tmpPath)
+				return err
+			}
+
+			// Close the current DB so we can replace the file
+			if err := db.Close(); err != nil {
+				os.Remove(tmpPath)
+				return fmt.Errorf("close db before pull: %w", err)
+			}
+
+			// Remove old WAL/SHM files that may belong to the old DB
+			for _, ext := range []string{"-wal", "-shm"} {
+				os.Remove(dbPath + ext)
+			}
+
+			// Swap the new file into place
+			if err := os.Rename(tmpPath, dbPath); err != nil {
+				// If rename fails (e.g. cross-device), fall back to copy
+				if err := copyFile(tmpPath, dbPath); err != nil {
+					os.Remove(tmpPath)
+					return fmt.Errorf("replace db file: %w", err)
+				}
+				os.Remove(tmpPath)
+			}
+
+			// Reopen the database with schema, triggers, and meta
+			newDB, err := ttdb.OpenPath(dbPath)
+			if err != nil {
+				return fmt.Errorf("reopen db after pull: %w", err)
+			}
+
+			// Replace the package-level db reference so the rest of the
+			// process (e.g. defer in main) uses the new connection
+			db = newDB
+
+			if jsonOutput {
+				return printJSON(map[string]string{
+					"status": "pulled",
+					"type":   string(syncCfg.Type),
+				})
+			}
+			fmt.Printf("pulled from %s backend\n", syncCfg.Type)
+			return nil
+		},
+	}
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
+}
+
+func newSyncConfigureCmd() *cobra.Command {
+	var (
+		backendType string
+		path        string
+		host        string
+		user        string
+		port        int
+		remotePath  string
+		bucket      string
+		region      string
+		accessKey   string
+		secretKey   string
+		endpoint    string
+		branch      string
+		unset       bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "configure",
+		Short: "Configure a sync backend for the current database",
+		Long: `Configure a sync backend for the current database.
+
+Examples:
+  tt sync configure --type directory --path ~/Dropbox/tt
+  tt sync configure --type scp --host myserver.com --user jrdn --remote-path /home/jrdn/tt/tt.db
+  tt sync configure --type s3 --bucket my-tt-backup --region us-east-1
+  tt sync configure --type git_lfs --branch tt-sync`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			dbName, err := ttdb.RepoDBName()
+			if err != nil {
+				return err
+			}
+
+			if unset {
+				cfg.UnsetSyncConfig(dbName)
+				if err := cfg.Save(); err != nil {
+					return err
+				}
+				if jsonOutput {
+					return printJSON(map[string]string{
+						"status": "unset",
+						"db":     dbName,
+					})
+				}
+				fmt.Printf("sync backend unset for database %q\n", dbName)
+				return nil
+			}
+
+			if backendType == "" {
+				return fmt.Errorf("--type is required (directory, scp, s3, or git_lfs)")
+			}
+
+			syncCfg := &config.SyncConfig{
+				Type:       config.SyncBackendType(backendType),
+				Path:       path,
+				Host:       host,
+				User:       user,
+				Port:       port,
+				RemotePath: remotePath,
+				Bucket:     bucket,
+				Region:     region,
+				AccessKey:  accessKey,
+				SecretKey:  secretKey,
+				Endpoint:   endpoint,
+				Branch:     branch,
+			}
+
+			if err := syncCfg.Validate(); err != nil {
+				return err
+			}
+
+			cfg.SetSyncConfig(dbName, syncCfg)
+			if err := cfg.Save(); err != nil {
+				return err
+			}
+
+			if jsonOutput {
+				return printJSON(map[string]string{
+					"status": "configured",
+					"db":     dbName,
+					"type":   string(syncCfg.Type),
+				})
+			}
+			fmt.Printf("configured %s sync backend for database %q\n", syncCfg.Type, dbName)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&backendType, "type", "", "Backend type: directory, scp, s3, git_lfs")
+	cmd.Flags().StringVar(&path, "path", "", "Local directory path (directory backend)")
+	cmd.Flags().StringVar(&host, "host", "", "Remote host (scp backend)")
+	cmd.Flags().StringVar(&user, "user", "", "Remote user (scp backend)")
+	cmd.Flags().IntVar(&port, "port", 22, "SSH port (scp backend)")
+	cmd.Flags().StringVar(&remotePath, "remote-path", "", "Remote file path (scp backend)")
+	cmd.Flags().StringVar(&bucket, "bucket", "", "S3 bucket name (s3 backend)")
+	cmd.Flags().StringVar(&region, "region", "", "AWS region (s3 backend)")
+	cmd.Flags().StringVar(&accessKey, "access-key", "", "AWS access key (s3 backend)")
+	cmd.Flags().StringVar(&secretKey, "secret-key", "", "AWS secret key (s3 backend)")
+	cmd.Flags().StringVar(&endpoint, "endpoint", "", "S3-compatible endpoint URL (s3 backend)")
+	cmd.Flags().StringVar(&branch, "branch", "tt-sync", "Git branch for sync (git_lfs backend)")
+	cmd.Flags().BoolVar(&unset, "unset", false, "Remove sync configuration")
+
+	return cmd
+}
