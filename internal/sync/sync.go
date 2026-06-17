@@ -276,29 +276,29 @@ func (b *GitLFSBackend) pushURL(ctx context.Context, localPath string) error {
 	}
 
 	filename := filepath.Base(localPath)
-	runCmd(ctx, syncRepo, "git", "lfs", "track", filename)
 
-	// Try to fetch the existing branch; ignore error if it doesn't exist yet.
+	// Fetch remote branch; ignore error if it doesn't exist yet.
 	runCmd(ctx, syncRepo, "git", "fetch", "origin", b.branch)
 
 	remoteExists := runCmd(ctx, syncRepo, "git", "rev-parse", "--verify", "origin/"+b.branch) == nil
-	localExists := runCmd(ctx, syncRepo, "git", "rev-parse", "--verify", b.branch) == nil
-
-	switch {
-	case localExists:
-		runCmd(ctx, syncRepo, "git", "checkout", b.branch)
-		if remoteExists {
-			runCmd(ctx, syncRepo, "git", "reset", "--hard", "origin/"+b.branch)
+	if remoteExists {
+		// Reset local branch to remote state, creating it if needed.
+		if err := runCmd(ctx, syncRepo, "git", "checkout", "-B", b.branch, "origin/"+b.branch); err != nil {
+			return err
 		}
-	case remoteExists:
-		runCmd(ctx, syncRepo, "git", "checkout", "--track", "origin/"+b.branch)
-	default:
+	} else {
+		// First push: create an orphan branch with an initial empty commit
+		// so the branch ref exists before we try to push it.
 		if err := runCmd(ctx, syncRepo, "git", "checkout", "--orphan", b.branch); err != nil {
 			return err
 		}
 		runCmd(ctx, syncRepo, "git", "rm", "-rf", "--cached", ".")
+		if err := runCmd(ctx, syncRepo, "git", "commit", "--allow-empty", "-m", "init sync branch"); err != nil {
+			return err
+		}
 	}
 
+	runCmd(ctx, syncRepo, "git", "lfs", "track", filename)
 	if err := copyFile(localPath, filepath.Join(syncRepo, filename)); err != nil {
 		return err
 	}
