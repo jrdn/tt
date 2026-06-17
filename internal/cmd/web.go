@@ -331,12 +331,12 @@ func newWebCmd() *cobra.Command {
 			mux.HandleFunc("POST /api/tasks/{id}/relations", srv.handleAddRelation)
 			mux.HandleFunc("DELETE /api/tasks/{from}/relations/{rtype}/{to}", srv.handleRemoveRelation)
 
-			addr := fmt.Sprintf("localhost:%d", port)
+			addr := fmt.Sprintf(":%d", port)
 			ln, err := net.Listen("tcp", addr)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("tt web: http://%s\n", addr)
+			fmt.Printf("tt web: http://0.0.0.0%s\n", addr)
 			return http.Serve(ln, mux)
 		},
 	}

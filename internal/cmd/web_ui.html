@@ -593,6 +593,60 @@ main {
 .btn-cancel { background: #f3f4f6; color: #374151; }
 .btn-cancel:hover { background: #e5e7eb; }
 
+/* ── Back button (mobile only) ── */
+.back-btn {
+  display: none;
+  background: none;
+  border: none;
+  color: #cdd6f4;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+.back-btn:hover { background: rgba(255,255,255,0.1); }
+
+/* ── Mobile layout ── */
+@media (max-width: 640px) {
+  .back-btn { display: block; }
+
+  .layout { flex-direction: column; }
+
+  aside {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid #e5e7eb;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* single-panel switching */
+  .layout.detail-active aside { display: none; }
+  .layout:not(.detail-active) main { display: none; }
+
+  .task-detail { padding: 16px 14px 60px; }
+
+  .detail-header { flex-wrap: wrap; gap: 10px; }
+  .detail-title { font-size: 18px; }
+  .detail-title-input { font-size: 18px; }
+
+  .meta-grid { grid-template-columns: 76px 1fr; }
+  .editable-input { width: 100%; max-width: 200px; }
+
+  .recent-popup { left: 10px; right: 10px; width: auto; }
+
+  .form-row { grid-template-columns: 1fr; }
+
+  .relation-add-row { flex-wrap: wrap; }
+  .relation-add-row select { flex-shrink: 0; }
+
+  .add-comment-footer { flex-wrap: wrap; }
+  .author-input { flex: 1; min-width: 100px; width: auto; }
+  .spacer { display: none; }
+}
+
 /* ── New task modal ── */
 .modal-overlay {
   position: fixed;
@@ -686,6 +740,7 @@ main {
 </head>
 <body>
 <header>
+  <button class="back-btn" id="back-btn" onclick="goBackToList()" style="display:none">← Back</button>
   <h1>tt</h1>
   <button class="btn btn-ghost" onclick="openNewTask()" style="font-size:12px;padding:5px 12px">+ New</button>
   <button class="recent-btn" id="recent-btn" onclick="toggleRecent()">Recent</button>
@@ -867,7 +922,7 @@ function refreshList() {
 function renderFilters() {
   document.getElementById('filter-strip').innerHTML = FILTERS.map(f =>
     `<button class="filter-btn${currentFilter === f.value ? ' active' : ''}"
-             onclick="setFilter(${JSON.stringify(f.value)})">${esc(f.label)}</button>`
+             onclick='setFilter(${JSON.stringify(f.value)})'>${esc(f.label)}</button>`
   ).join('');
 }
 
@@ -916,6 +971,24 @@ function renderTaskList(tasks) {
   }).join('');
 }
 
+// ── Mobile panel switching ─────────────────────────────────
+function isMobile() { return window.innerWidth <= 640; }
+
+function showDetailPanel() {
+  document.querySelector('.layout').classList.add('detail-active');
+  const backBtn = document.getElementById('back-btn');
+  if (backBtn) backBtn.style.display = isMobile() ? 'block' : 'none';
+}
+
+function goBackToList() {
+  selectedId = null;
+  document.querySelector('.layout').classList.remove('detail-active');
+  const backBtn = document.getElementById('back-btn');
+  if (backBtn) backBtn.style.display = 'none';
+  document.querySelectorAll('.task-item').forEach(el => el.classList.remove('active'));
+  document.getElementById('main').innerHTML = '<div class="empty-state">Select a task to view details</div>';
+}
+
 // ── Task detail ────────────────────────────────────────────
 async function selectTask(id) {
   selectedId = id;
@@ -923,6 +996,7 @@ async function selectTask(id) {
     const chip = el.querySelector('.id-chip');
     el.classList.toggle('active', chip && chip.textContent.trim() === id);
   });
+  showDetailPanel();
   await loadTask(id);
 }
 
