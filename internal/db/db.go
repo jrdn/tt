@@ -51,6 +51,14 @@ CREATE TABLE IF NOT EXISTS meta (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS external_refs (
+	task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+	source      TEXT NOT NULL,
+	external_id TEXT NOT NULL,
+	url         TEXT,
+	PRIMARY KEY (source, external_id)
+);
 `
 
 // triggerDefs lists (name, body) for every mutation trigger. On each open
@@ -139,10 +147,11 @@ func applyTriggers(db *sqlx.DB) error {
 
 func initMeta(db *sqlx.DB) error {
 	_, err := db.Exec(`INSERT OR IGNORE INTO meta (key, value) VALUES
-		('schema_version',  ?),
-		('app_version',     ''),
-		('last_mutation_at',''),
-		('mutation_count',  '0')`,
+		('schema_version',    ?),
+		('app_version',       ''),
+		('last_mutation_at',  ''),
+		('mutation_count',    '0'),
+		('sync_baseline',     '0')`,
 		strconv.Itoa(SchemaVersion))
 	if err != nil {
 		return err

@@ -197,6 +197,7 @@ func (b *S3Backend) envWithCreds(env []string) []string {
 // on a separate branch.
 type GitLFSBackend struct {
 	branch string
+	remote string
 }
 
 func NewGitLFSBackend(cfg *config.SyncConfig) *GitLFSBackend {
@@ -204,77 +205,30 @@ func NewGitLFSBackend(cfg *config.SyncConfig) *GitLFSBackend {
 	if branch == "" {
 		branch = "tt-sync"
 	}
-	return &GitLFSBackend{branch: branch}
+	remote := cfg.Remote
+	if remote == "" {
+		remote = "origin"
+	}
+	return &GitLFSBackend{branch: branch, remote: remote}
 }
 
 func (b *GitLFSBackend) Push(ctx context.Context, localPath string) error {
-	// Verify git-lfs is installed
 	if _, err := exec.LookPath("git-lfs"); err != nil {
 		return fmt.Errorf("git-lfs is required but not installed: %w", err)
 	}
 
 	filename := filepath.Base(localPath)
-	tmpDir, err := os.MkdirTemp("", "tt-sync-*")
-	if err != nil {
-		return fmt.Errorf("create temp dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
 
-	// Initialize git repo in temp dir
-	if err := runCmd(ctx, tmpDir, "git", "init"); err != nil {
-		return err
-	}
-	if err := runCmd(ctx, tmpDir, "git", "lfs", "install"); err != nil {
-		return err
-	}
-	if err := runCmd(ctx, tmpDir, "git", "config", "user.email", "tt-sync@local"); err != nil {
-		return err
-	}
-	if err := runCmd(ctx, tmpDir, "git", "config", "user.name", "tt sync"); err != nil {
-		return err
-	}
-
-	// Track the db file with lfs
-	if err := runCmd(ctx, tmpDir, "git", "lfs", "track", filename); err != nil {
-		return err
-	}
-	if err := runCmd(ctx, tmpDir, "git", "add", ".gitattributes"); err != nil {
-		return err
-	}
-	if err := runCmd(ctx, tmpDir, "git", "commit", "-m", "init lfs tracking"); err != nil {
-		return err
-	}
-
-	// Copy db file
-	if err := copyFile(localPath, filepath.Join(tmpDir, filename)); err != nil {
-		return err
-	}
-	if err := runCmd(ctx, tmpDir, "git", "add", filename); err != nil {
-		return err
-	}
-	if err := runCmd(ctx, tmpDir, "git", "commit", "-m", "sync push"); err != nil {
-		return err
-	}
-
-	// Find the git root of the calling repo (CWD, not the DB directory).
 	rootOut, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("get git root: %w", err)
 	}
 	gitRoot := strings.TrimSpace(string(rootOut))
 
-	// Create an orphan branch if it doesn't exist, or checkout existing
-	branchExists := runCmd(ctx, gitRoot, "git", "rev-parse", "--verify", b.branch) == nil
-	if branchExists {
-		if err := runCmd(ctx, gitRoot, "git", "fetch", ".", b.branch+":"+b.branch); err != nil {
-			// branch might not exist on remote, that's ok
-		}
-	}
-
-	// Copy files from temp to a worktree and push
 	worktreeDir := filepath.Join(gitRoot, ".git", "tt-sync-worktree")
 	os.RemoveAll(worktreeDir)
 
+	branchExists := runCmd(ctx, gitRoot, "git", "rev-parse", "--verify", b.branch) == nil
 	if branchExists {
 		if err := runCmd(ctx, gitRoot, "git", "worktree", "add", "--force", worktreeDir, b.branch); err != nil {
 			return err
@@ -286,12 +240,10 @@ func (b *GitLFSBackend) Push(ctx context.Context, localPath string) error {
 	}
 	defer runCmd(ctx, gitRoot, "git", "worktree", "remove", "--force", worktreeDir)
 
-	// Set up lfs in worktree
 	runCmd(ctx, worktreeDir, "git", "lfs", "install", "--local")
-
-	// Track and copy
 	runCmd(ctx, worktreeDir, "git", "lfs", "track", filename)
 	runCmd(ctx, worktreeDir, "git", "add", ".gitattributes")
+
 	if err := copyFile(localPath, filepath.Join(worktreeDir, filename)); err != nil {
 		return err
 	}
@@ -300,6 +252,12 @@ func (b *GitLFSBackend) Push(ctx context.Context, localPath string) error {
 	}
 	if err := runCmd(ctx, worktreeDir, "git", "commit", "--allow-empty", "-m", "tt sync push"); err != nil {
 		return err
+	}
+
+	// Push the branch to the remote. Force-push is safe here — this branch
+	// is only ever written by tt sync, so there's no collaborative history.
+	if err := runCmd(ctx, gitRoot, "git", "push", "--force", b.remote, b.branch+":"+b.branch); err != nil {
+		return fmt.Errorf("push sync branch to %s: %w", b.remote, err)
 	}
 
 	return nil
@@ -313,25 +271,23 @@ func (b *GitLFSBackend) Pull(ctx context.Context, localPath string) error {
 	}
 	gitRoot := strings.TrimSpace(string(rootOut))
 
-	// Check if the sync branch exists
-	if err := runCmd(ctx, gitRoot, "git", "rev-parse", "--verify", b.branch); err != nil {
-		return fmt.Errorf("sync branch %q not found", b.branch)
+	// Fetch the sync branch from the remote before checking for it locally.
+	if err := runCmd(ctx, gitRoot, "git", "fetch", b.remote, b.branch); err != nil {
+		return fmt.Errorf("fetch sync branch %q from %q: %w", b.branch, b.remote, err)
 	}
 
-	// Compute a unique path for the worktree; git worktree add requires
-	// the target to not already exist, so we can't use os.MkdirTemp directly.
 	worktreeDir := filepath.Join(os.TempDir(), fmt.Sprintf("tt-pull-%d", os.Getpid()))
 	defer os.RemoveAll(worktreeDir)
 
-	if err := runCmd(ctx, gitRoot, "git", "worktree", "add", "--force", worktreeDir, b.branch); err != nil {
+	// Check out from the remote tracking ref so we get the latest fetched state.
+	remoteRef := b.remote + "/" + b.branch
+	if err := runCmd(ctx, gitRoot, "git", "worktree", "add", "--force", worktreeDir, remoteRef); err != nil {
 		return err
 	}
 	defer runCmd(ctx, gitRoot, "git", "worktree", "remove", "--force", worktreeDir)
 
-	// Pull lfs files
 	runCmd(ctx, worktreeDir, "git", "lfs", "pull")
 
-	// Copy the file back
 	src := filepath.Join(worktreeDir, filename)
 	if _, err := os.Stat(src); os.IsNotExist(err) {
 		return fmt.Errorf("db file not found in sync branch")

@@ -57,6 +57,7 @@ type SyncConfig struct {
 
 	// git_lfs backend
 	Branch string `json:"branch,omitempty"` // git branch for sync
+	Remote string `json:"remote,omitempty"` // git remote for sync (default: origin)
 }
 
 // DBConfig holds the configuration for a single database.

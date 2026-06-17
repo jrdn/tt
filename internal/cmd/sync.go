@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/jrdn/tt/internal/config"
 	ttdb "github.com/jrdn/tt/internal/db"
 	ttsync "github.com/jrdn/tt/internal/sync"
@@ -80,6 +82,12 @@ func newSyncPushCmd() *cobra.Command {
 				return err
 			}
 
+			// Record the current mutation_count as the new baseline so
+			// future pulls can detect divergence.
+			if count, err := ttdb.GetMeta(db, "mutation_count"); err == nil {
+				ttdb.SetMeta(db, "sync_baseline", count)
+			}
+
 			if jsonOutput {
 				return printJSON(map[string]string{
 					"status": "pushed",
@@ -93,7 +101,9 @@ func newSyncPushCmd() *cobra.Command {
 }
 
 func newSyncPullCmd() *cobra.Command {
-	return &cobra.Command{
+	var force bool
+
+	cmd := &cobra.Command{
 		Use:   "pull",
 		Short: "Pull database from the configured sync backend",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -139,15 +149,19 @@ func newSyncPullCmd() *cobra.Command {
 				return err
 			}
 
+			if !force {
+				if err := checkNotAhead(db, tmpPath); err != nil {
+					return err
+				}
+			}
+
 			// Checkpoint current DB to ensure clean state before swap
 			if err := ttdb.Checkpoint(db); err != nil {
-				os.Remove(tmpPath)
 				return err
 			}
 
 			// Close the current DB so we can replace the file
 			if err := db.Close(); err != nil {
-				os.Remove(tmpPath)
 				return fmt.Errorf("close db before pull: %w", err)
 			}
 
@@ -176,6 +190,12 @@ func newSyncPullCmd() *cobra.Command {
 			// process (e.g. defer in main) uses the new connection
 			db = newDB
 
+			// Record the remote's mutation_count as the new baseline so
+			// future pulls can detect divergence from this point forward.
+			if count, err := ttdb.GetMeta(db, "mutation_count"); err == nil {
+				ttdb.SetMeta(db, "sync_baseline", count)
+			}
+
 			if jsonOutput {
 				return printJSON(map[string]string{
 					"status": "pulled",
@@ -186,6 +206,72 @@ func newSyncPullCmd() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&force, "force", false, "Replace local DB even if it has mutations not in the remote")
+	return cmd
+}
+
+// checkNotAhead opens the staged remote DB and performs a three-way comparison
+// using mutation_count and the last sync baseline recorded on this machine.
+//
+// The baseline is the mutation_count both sides agreed on after the last sync.
+// This lets us distinguish "remote is stale" from "both sides diverged".
+func checkNotAhead(localDB *sqlx.DB, remotePath string) error {
+	remoteDB, err := ttdb.OpenPath(remotePath)
+	if err != nil {
+		return fmt.Errorf("open remote db for comparison: %w", err)
+	}
+	defer remoteDB.Close()
+
+	local, err := getMutationMeta(localDB)
+	if err != nil {
+		return fmt.Errorf("read local meta: %w", err)
+	}
+	remote, err := getMutationMeta(remoteDB)
+	if err != nil {
+		return fmt.Errorf("read remote meta: %w", err)
+	}
+
+	localAhead := local.count > local.baseline
+	remoteAhead := remote.count > local.baseline
+
+	switch {
+	case localAhead && remoteAhead:
+		return fmt.Errorf(
+			"local and remote have both changed since last sync (baseline: %d, local: %d at %s, remote: %d at %s)\n"+
+				"Use --force to overwrite local with remote, or push your local changes first",
+			local.baseline, local.count, local.at, remote.count, remote.at,
+		)
+	case localAhead:
+		return fmt.Errorf(
+			"local DB is ahead of remote (baseline: %d, local: %d at %s, remote: %d at %s)\n"+
+				"Push first, or use --force to overwrite local changes",
+			local.baseline, local.count, local.at, remote.count, remote.at,
+		)
+	}
+	return nil
+}
+
+type mutationMeta struct {
+	count    int
+	baseline int
+	at       string
+}
+
+func getMutationMeta(database *sqlx.DB) (mutationMeta, error) {
+	countStr, err := ttdb.GetMeta(database, "mutation_count")
+	if err != nil {
+		return mutationMeta{}, err
+	}
+	baselineStr, err := ttdb.GetMeta(database, "sync_baseline")
+	if err != nil {
+		return mutationMeta{}, err
+	}
+	at, _ := ttdb.GetMeta(database, "last_mutation_at")
+
+	count, _ := strconv.Atoi(countStr)
+	baseline, _ := strconv.Atoi(baselineStr)
+	return mutationMeta{count: count, baseline: baseline, at: at}, nil
 }
 
 func copyFile(src, dst string) error {
@@ -219,6 +305,7 @@ func newSyncConfigureCmd() *cobra.Command {
 		secretKey   string
 		endpoint    string
 		branch      string
+		remote      string
 		unset       bool
 	)
 
@@ -275,6 +362,7 @@ Examples:
 				SecretKey:  secretKey,
 				Endpoint:   endpoint,
 				Branch:     branch,
+				Remote:     remote,
 			}
 
 			if err := syncCfg.Validate(); err != nil {
@@ -310,6 +398,7 @@ Examples:
 	cmd.Flags().StringVar(&secretKey, "secret-key", "", "AWS secret key (s3 backend)")
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "S3-compatible endpoint URL (s3 backend)")
 	cmd.Flags().StringVar(&branch, "branch", "tt-sync", "Git branch for sync (git_lfs backend)")
+	cmd.Flags().StringVar(&remote, "remote", "origin", "Git remote for sync (git_lfs backend)")
 	cmd.Flags().BoolVar(&unset, "unset", false, "Remove sync configuration")
 
 	return cmd
