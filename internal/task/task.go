@@ -325,48 +325,6 @@ func Search(db *sqlx.DB, query string) ([]Task, error) {
 	return out, nil
 }
 
-// Next atomically finds and claims the highest-priority ready task assigned to
-// the given handle. Returns nil, nil if no eligible task exists.
-func Next(db *sqlx.DB, assignee string) (*Task, error) {
-	tx, err := db.Beginx()
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-
-	var t Task
-	err = tx.Get(&t, `
-		SELECT * FROM tasks
-		WHERE assignee = ?
-		  AND status IN ('open', 'ready')
-		  AND NOT EXISTS (
-			SELECT 1 FROM relations r
-			JOIN tasks b ON b.id = r.from_id
-			WHERE r.to_id = tasks.id AND r.type = 'blocks'
-			  AND b.status NOT IN ('done', 'cancelled')
-		  )
-		ORDER BY priority ASC, created_at ASC
-		LIMIT 1`, assignee)
-	if err != nil {
-		if err.Error() == "sql: no rows in result set" {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	ts := now()
-	t.Status = StatusInProgress
-	t.UpdatedAt = ts
-	if _, err := tx.Exec(`UPDATE tasks SET status='in_progress', updated_at=? WHERE id=?`, ts, t.ID); err != nil {
-		return nil, err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return &t, nil
-}
-
 func AddComment(db *sqlx.DB, taskPrefix, body string, author *string) (*Comment, error) {
 	t, err := Get(db, taskPrefix)
 	if err != nil {
@@ -432,4 +390,70 @@ func GetRelations(db *sqlx.DB, taskID string) ([]Relation, error) {
 	var rels []Relation
 	err := db.Select(&rels, `SELECT * FROM relations WHERE from_id=? OR to_id=?`, taskID, taskID)
 	return rels, err
+}
+
+// Next atomically finds and claims the highest-priority ready task assigned to
+// handle, returning nil if no such task exists.
+func Next(db *sqlx.DB, handle string) (*Task, error) {
+	tx, err := db.Beginx()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var t Task
+	err = tx.Get(&t, `SELECT * FROM tasks
+		WHERE assignee = ? AND status IN ('open', 'ready')
+		AND NOT EXISTS (
+			SELECT 1 FROM relations r
+			JOIN tasks b ON b.id = r.from_id
+			WHERE r.to_id = tasks.id AND r.type = 'blocks'
+			AND b.status NOT IN ('done', 'cancelled')
+		)
+		ORDER BY priority ASC, created_at ASC
+		LIMIT 1`, handle)
+	if err != nil {
+		return nil, nil // no matching task
+	}
+
+	ts := now()
+	t.Status = StatusInProgress
+	t.UpdatedAt = ts
+	if _, err := tx.Exec(`UPDATE tasks SET status='in_progress', updated_at=? WHERE id=?`, ts, t.ID); err != nil {
+		return nil, err
+	}
+	return &t, tx.Commit()
+}
+
+type ExternalRef struct {
+	TaskID     string  `db:"task_id"     json:"task_id"`
+	Source     string  `db:"source"      json:"source"`
+	ExternalID string  `db:"external_id" json:"external_id"`
+	URL        *string `db:"url"         json:"url,omitempty"`
+}
+
+func UpsertExternalRef(db *sqlx.DB, taskID, source, externalID string, url *string) error {
+	_, err := db.Exec(`INSERT INTO external_refs (task_id, source, external_id, url)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(source, external_id) DO UPDATE SET task_id=excluded.task_id, url=excluded.url`,
+		taskID, source, externalID, url)
+	return err
+}
+
+func FindByExternalRef(db *sqlx.DB, source, externalID string) (*Task, error) {
+	var t Task
+	err := db.Get(&t, `SELECT tasks.* FROM tasks
+		JOIN external_refs ON external_refs.task_id = tasks.id
+		WHERE external_refs.source = ? AND external_refs.external_id = ?`,
+		source, externalID)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func GetExternalRefs(db *sqlx.DB, taskID string) ([]ExternalRef, error) {
+	var refs []ExternalRef
+	err := db.Select(&refs, `SELECT * FROM external_refs WHERE task_id = ?`, taskID)
+	return refs, err
 }
