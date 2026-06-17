@@ -20,7 +20,7 @@ Tasks are stored in a SQLite file under `~/.config/tt/`. The CLI talks to it dir
                │ sync (your choice)
 ┌──────────────▼──────────────┐
 │       sync backend          │
-│  S3 / Git LFS / directory   │
+│  S3 / Git LFS / rsync / etc │
 └─────────────────────────────┘
 ```
 
@@ -47,34 +47,62 @@ Override the active database entirely with `TASKS_DB`:
 TASKS_DB=/path/to/tasks.db tt ls
 ```
 
-## Status Values
+## Task Schema
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | yes | Short hash, generated on create |
+| `title` | string | yes | One-line summary |
+| `status` | enum | yes | See below |
+| `parent_id` | string | no | ID of parent task |
+| `description` | text | no | Longer body / notes |
+| `priority` | int | no | 0 (critical) – 4 (backlog), default 2 |
+| `created_by` | string | no | Free-form handle of creator (human or agent) |
+| `assignee` | string | no | Free-form handle: `jrdn`, `claude/opus4.7`, `lmstudio/qwen3-coder` |
+| `due_date` | date | no | YYYY-MM-DD |
+| `created_at` | timestamp | yes | Set on create, immutable |
+| `updated_at` | timestamp | yes | Updated on every write |
+| `closed_at` | timestamp | no | Set when status moves to `done` or `cancelled` |
+
+### Status Values
 
 | Value | Meaning |
 |---|---|
-| `backlog` | Parked, not yet scheduled |
 | `open` | Not started |
-| `ready` | Unblocked, ready to pick up |
 | `in_progress` | Actively being worked |
-| `in_review` | Waiting on review |
 | `done` | Completed |
 | `cancelled` | Explicitly abandoned |
 
-## Comments
+`parent_id` enables subtask trees of arbitrary depth.
+
+### Comments
 
 Tasks have a comments log for appending progress notes, agent reasoning, or status updates without modifying the description.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string | Short hash |
+| `task_id` | string | Parent task |
+| `author` | string | Free-form handle, same format as `created_by` / `assignee` |
+| `body` | text | Comment content |
+| `created_at` | timestamp | Immutable |
 
 ```bash
 tt comment <id> "tried approach X, hit rate limit — retrying with backoff"
 tt show <id>   # renders comments chronologically below description
 ```
 
-## Relations
+### Relations
 
-Tasks can have typed relations to other tasks:
+Tasks can have typed relations to other tasks, stored as a separate edge table:
 
-- `blocks` — source must be resolved before the target
-- `duplicates` — source is a duplicate of the target
-- `related` — weak bidirectional link with no implied ordering
+| Field | Type | Description |
+|---|---|---|
+| `from_id` | string | Source task |
+| `to_id` | string | Target task |
+| `type` | enum | `blocks`, `duplicates`, `related` |
+
+Relations are directional. `blocks` means the source must be resolved before the target. `duplicates` means the source is a duplicate of the target. `related` is a weak bidirectional link with no implied ordering.
 
 ```bash
 tt relate <id> blocks <id>
@@ -101,34 +129,67 @@ tt update <id> --status=in_progress # update any field
 
 Sync is intentionally not automatic. Pull before you start working, push when you're done.
 
+Each database has its own sync config at `~/.config/tt/config/<dbname>.toml`. For example, `~/.config/tt/myrepo.db` is configured at `~/.config/tt/config/myrepo.toml`:
+
+```toml
+backend = "s3"          # s3 | rsync | lfs
+
+[s3]
+bucket = "your-bucket"
+
+[rsync]
+target = "user@host:~/.config/tt/"
+
+[lfs]
+branch = "tasks"
+```
+
+Then sync with:
+
 ```bash
 tt sync pull
 tt sync push
 ```
 
-Sync config is stored in `~/.config/tt/config.json` and managed with `tt sync configure`.
-
-### Local directory
-
-```bash
-tt sync configure --type directory --path /path/to/shared/dir
-```
-
 ### AWS S3
 
-```bash
-tt sync configure --type s3 --bucket my-bucket --region us-east-1
+```toml
+backend = "s3"
+
+[s3]
+bucket = "your-bucket"
 ```
 
-Enable versioning on the bucket so you can recover from accidental overwrites.
+Enable versioning on the bucket. If you overwrite with stale data you can recover a previous version.
 
-### Git LFS
+For continuous background replication, [Litestream](https://litestream.io) streams SQLite's WAL to S3 automatically and supports point-in-time recovery:
 
 ```bash
-tt sync configure --type git_lfs --branch tasks
+litestream replicate ~/.config/tt/myrepo.db s3://your-bucket/myrepo.db
+litestream restore -o ~/.config/tt/myrepo.db s3://your-bucket/myrepo.db
 ```
 
-Tasks live on an orphan branch in any existing repo, with LFS handling binary storage. Requires no new infrastructure if you're already on GitHub or GitLab.
+### rsync over SSH
+
+```toml
+backend = "rsync"
+
+[rsync]
+target = "user@host:~/.config/tt/"
+```
+
+Simple and dependency-free if you have a machine accessible from both devices.
+
+### Git LFS (orphan branch)
+
+```toml
+backend = "lfs"
+
+[lfs]
+branch = "tasks"
+```
+
+Tasks live on an orphan branch in any existing repo (or a dedicated one), with LFS handling binary storage. Requires no new infrastructure if you're already on GitHub or GitLab.
 
 ```bash
 # one-time setup
@@ -140,3 +201,25 @@ git add .gitattributes
 git commit -m "init tasks branch"
 git push origin tasks
 ```
+
+LFS bandwidth on GitHub is 1GB/month free. At task-manager scale you will not hit this limit.
+
+### Syncthing
+
+Run Syncthing on both machines and add `~/.config/tt/` as a shared folder. Sync is continuous and automatic. Syncthing creates conflict files rather than silently overwriting, which makes accidental simultaneous writes recoverable.
+
+Good option if you want set-and-forget sync without a cloud dependency. No git config needed — just point Syncthing at the directory.
+
+### Dropbox / iCloud
+
+Symlink `~/.config/tt/` into your Dropbox or iCloud Drive folder. Sync is handled automatically.
+
+Note: iCloud has no official Linux client. Dropbox has a Linux client but limits support to ext4 filesystems. Neither is recommended if Linux is a primary machine.
+
+## Conflict Behavior
+
+No sync backend here provides true conflict resolution for simultaneous writes from two offline machines. The realistic failure scenario is: you write tasks on machine A while offline, write tasks on machine B while offline, then sync. One machine's changes will win depending on the backend.
+
+In practice this is rare if you're switching between machines rather than using both simultaneously. S3 versioning and Litestream both provide recovery options if you do overwrite something you didn't mean to.
+
+If true offline peer sync with conflict resolution is a hard requirement, reconsider this tool.

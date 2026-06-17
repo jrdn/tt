@@ -14,11 +14,6 @@ func newRelateCmd() *cobra.Command {
 		Short:   "Add a relation between tasks (blocks, duplicates, related)",
 		Long: `Add a relation between tasks.
 
-Relation types:
-  blocks      <from> is blocking <to> (implies <to> is blocked-by <from>)
-  duplicates  <from> duplicates <to>
-  related     general association with no directional meaning
-
 Each ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).
 Cross-database relations are not supported — both tasks must be in the same database.`,
 		Args:  cobra.ExactArgs(3),
