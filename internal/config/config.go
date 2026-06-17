@@ -56,8 +56,9 @@ type SyncConfig struct {
 	Endpoint  string `json:"endpoint,omitempty"` // optional, for S3-compatible services
 
 	// git_lfs backend
-	Branch string `json:"branch,omitempty"` // git branch for sync
-	Remote string `json:"remote,omitempty"` // git remote for sync (default: origin)
+	Branch  string `json:"branch,omitempty"`   // git branch for sync
+	Remote  string `json:"remote,omitempty"`   // git remote name (default: origin); used when RepoURL is empty
+	RepoURL string `json:"repo_url,omitempty"` // explicit remote URL; enables CWD-independent sync
 }
 
 // DBConfig holds the configuration for a single database.

@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/jrdn/tt/internal/config"
@@ -274,6 +276,14 @@ func getMutationMeta(database *sqlx.DB) (mutationMeta, error) {
 	return mutationMeta{count: count, baseline: baseline, at: at}, nil
 }
 
+func gitRemoteURL(remote string) (string, error) {
+	out, err := exec.Command("git", "remote", "get-url", remote).Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -306,6 +316,7 @@ func newSyncConfigureCmd() *cobra.Command {
 		endpoint    string
 		branch      string
 		remote      string
+		repoURL     string
 		unset       bool
 	)
 
@@ -318,7 +329,7 @@ Examples:
   tt sync configure --type directory --path ~/Dropbox/tt
   tt sync configure --type scp --host myserver.com --user jrdn --remote-path /home/jrdn/tt/tt.db
   tt sync configure --type s3 --bucket my-tt-backup --region us-east-1
-  tt sync configure --type git_lfs --branch tt-sync`,
+  tt sync configure --type git_lfs --branch tt-sync --repo-url git@github.com:you/repo.git`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -349,6 +360,14 @@ Examples:
 				return fmt.Errorf("--type is required (directory, scp, s3, or git_lfs)")
 			}
 
+			// For git_lfs: if no --repo-url given, auto-detect from the
+			// current repo's remote so sync works outside this directory.
+			if config.SyncBackendType(backendType) == config.BackendGitLFS && repoURL == "" {
+				if url, err := gitRemoteURL(remote); err == nil {
+					repoURL = url
+				}
+			}
+
 			syncCfg := &config.SyncConfig{
 				Type:       config.SyncBackendType(backendType),
 				Path:       path,
@@ -363,6 +382,7 @@ Examples:
 				Endpoint:   endpoint,
 				Branch:     branch,
 				Remote:     remote,
+				RepoURL:    repoURL,
 			}
 
 			if err := syncCfg.Validate(); err != nil {
@@ -398,7 +418,8 @@ Examples:
 	cmd.Flags().StringVar(&secretKey, "secret-key", "", "AWS secret key (s3 backend)")
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "S3-compatible endpoint URL (s3 backend)")
 	cmd.Flags().StringVar(&branch, "branch", "tt-sync", "Git branch for sync (git_lfs backend)")
-	cmd.Flags().StringVar(&remote, "remote", "origin", "Git remote for sync (git_lfs backend)")
+	cmd.Flags().StringVar(&remote, "remote", "origin", "Git remote name (git_lfs backend)")
+	cmd.Flags().StringVar(&repoURL, "repo-url", "", "Explicit remote URL (git_lfs backend); auto-detected from --remote if omitted")
 	cmd.Flags().BoolVar(&unset, "unset", false, "Remove sync configuration")
 
 	return cmd

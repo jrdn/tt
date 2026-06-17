@@ -195,9 +195,14 @@ func (b *S3Backend) envWithCreds(env []string) []string {
 
 // GitLFSBackend pushes/pulls the database file using git and git-lfs
 // on a separate branch.
+//
+// When repoURL is set, all git operations happen inside a dedicated local
+// repo at <dbdir>/.sync-<dbname>/, making sync CWD-independent. When
+// repoURL is empty it falls back to the CWD git repo + remote name.
 type GitLFSBackend struct {
-	branch string
-	remote string
+	branch  string
+	remote  string // remote name, used when repoURL is empty
+	repoURL string // explicit remote URL; enables CWD-independent sync
 }
 
 func NewGitLFSBackend(cfg *config.SyncConfig) *GitLFSBackend {
@@ -209,14 +214,141 @@ func NewGitLFSBackend(cfg *config.SyncConfig) *GitLFSBackend {
 	if remote == "" {
 		remote = "origin"
 	}
-	return &GitLFSBackend{branch: branch, remote: remote}
+	return &GitLFSBackend{branch: branch, remote: remote, repoURL: cfg.RepoURL}
 }
 
 func (b *GitLFSBackend) Push(ctx context.Context, localPath string) error {
 	if _, err := exec.LookPath("git-lfs"); err != nil {
 		return fmt.Errorf("git-lfs is required but not installed: %w", err)
 	}
+	if b.repoURL != "" {
+		return b.pushURL(ctx, localPath)
+	}
+	return b.pushCWD(ctx, localPath)
+}
 
+func (b *GitLFSBackend) Pull(ctx context.Context, localPath string) error {
+	if b.repoURL != "" {
+		return b.pullURL(ctx, localPath)
+	}
+	return b.pullCWD(ctx, localPath)
+}
+
+// syncRepoPath returns the path of the dedicated local sync repo for a given
+// DB file. It lives alongside the DB so it's always accessible regardless of CWD.
+func (b *GitLFSBackend) syncRepoPath(localPath string) string {
+	return filepath.Join(filepath.Dir(localPath), ".sync-"+filepath.Base(localPath))
+}
+
+// ensureSyncRepo initialises the dedicated sync repo if it doesn't exist and
+// ensures its remote URL is current.
+func (b *GitLFSBackend) ensureSyncRepo(ctx context.Context, syncRepo string) error {
+	if _, err := os.Stat(filepath.Join(syncRepo, ".git")); os.IsNotExist(err) {
+		if err := os.MkdirAll(syncRepo, 0700); err != nil {
+			return fmt.Errorf("create sync repo: %w", err)
+		}
+		if err := runCmd(ctx, syncRepo, "git", "init"); err != nil {
+			return err
+		}
+		if err := runCmd(ctx, syncRepo, "git", "config", "user.email", "tt-sync@local"); err != nil {
+			return err
+		}
+		if err := runCmd(ctx, syncRepo, "git", "config", "user.name", "tt sync"); err != nil {
+			return err
+		}
+		if err := runCmd(ctx, syncRepo, "git", "lfs", "install", "--local"); err != nil {
+			return err
+		}
+		if err := runCmd(ctx, syncRepo, "git", "remote", "add", "origin", b.repoURL); err != nil {
+			return err
+		}
+	} else {
+		// Update remote URL in case it changed.
+		runCmd(ctx, syncRepo, "git", "remote", "set-url", "origin", b.repoURL)
+	}
+	return nil
+}
+
+func (b *GitLFSBackend) pushURL(ctx context.Context, localPath string) error {
+	syncRepo := b.syncRepoPath(localPath)
+	if err := b.ensureSyncRepo(ctx, syncRepo); err != nil {
+		return err
+	}
+
+	filename := filepath.Base(localPath)
+	runCmd(ctx, syncRepo, "git", "lfs", "track", filename)
+
+	// Try to fetch the existing branch; ignore error if it doesn't exist yet.
+	runCmd(ctx, syncRepo, "git", "fetch", "origin", b.branch)
+
+	remoteExists := runCmd(ctx, syncRepo, "git", "rev-parse", "--verify", "origin/"+b.branch) == nil
+	localExists := runCmd(ctx, syncRepo, "git", "rev-parse", "--verify", b.branch) == nil
+
+	switch {
+	case localExists:
+		runCmd(ctx, syncRepo, "git", "checkout", b.branch)
+		if remoteExists {
+			runCmd(ctx, syncRepo, "git", "reset", "--hard", "origin/"+b.branch)
+		}
+	case remoteExists:
+		runCmd(ctx, syncRepo, "git", "checkout", "--track", "origin/"+b.branch)
+	default:
+		if err := runCmd(ctx, syncRepo, "git", "checkout", "--orphan", b.branch); err != nil {
+			return err
+		}
+		runCmd(ctx, syncRepo, "git", "rm", "-rf", "--cached", ".")
+	}
+
+	if err := copyFile(localPath, filepath.Join(syncRepo, filename)); err != nil {
+		return err
+	}
+	runCmd(ctx, syncRepo, "git", "add", ".gitattributes")
+	if err := runCmd(ctx, syncRepo, "git", "add", filename); err != nil {
+		return err
+	}
+	if err := runCmd(ctx, syncRepo, "git", "commit", "--allow-empty", "-m", "tt sync push"); err != nil {
+		return err
+	}
+	if err := runCmd(ctx, syncRepo, "git", "push", "--force", "origin", b.branch+":"+b.branch); err != nil {
+		return fmt.Errorf("push sync branch: %w", err)
+	}
+	return nil
+}
+
+func (b *GitLFSBackend) pullURL(ctx context.Context, localPath string) error {
+	syncRepo := b.syncRepoPath(localPath)
+	if err := b.ensureSyncRepo(ctx, syncRepo); err != nil {
+		return err
+	}
+
+	filename := filepath.Base(localPath)
+
+	if err := runCmd(ctx, syncRepo, "git", "fetch", "origin", b.branch); err != nil {
+		return fmt.Errorf("fetch sync branch %q: %w", b.branch, err)
+	}
+
+	localExists := runCmd(ctx, syncRepo, "git", "rev-parse", "--verify", b.branch) == nil
+	if localExists {
+		runCmd(ctx, syncRepo, "git", "checkout", b.branch)
+		if err := runCmd(ctx, syncRepo, "git", "reset", "--hard", "origin/"+b.branch); err != nil {
+			return err
+		}
+	} else {
+		if err := runCmd(ctx, syncRepo, "git", "checkout", "--track", "origin/"+b.branch); err != nil {
+			return err
+		}
+	}
+
+	runCmd(ctx, syncRepo, "git", "lfs", "pull")
+
+	src := filepath.Join(syncRepo, filename)
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		return fmt.Errorf("db file not found in sync branch")
+	}
+	return copyFile(src, localPath)
+}
+
+func (b *GitLFSBackend) pushCWD(ctx context.Context, localPath string) error {
 	filename := filepath.Base(localPath)
 
 	rootOut, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").CombinedOutput()
@@ -253,17 +385,13 @@ func (b *GitLFSBackend) Push(ctx context.Context, localPath string) error {
 	if err := runCmd(ctx, worktreeDir, "git", "commit", "--allow-empty", "-m", "tt sync push"); err != nil {
 		return err
 	}
-
-	// Push the branch to the remote. Force-push is safe here — this branch
-	// is only ever written by tt sync, so there's no collaborative history.
 	if err := runCmd(ctx, gitRoot, "git", "push", "--force", b.remote, b.branch+":"+b.branch); err != nil {
 		return fmt.Errorf("push sync branch to %s: %w", b.remote, err)
 	}
-
 	return nil
 }
 
-func (b *GitLFSBackend) Pull(ctx context.Context, localPath string) error {
+func (b *GitLFSBackend) pullCWD(ctx context.Context, localPath string) error {
 	filename := filepath.Base(localPath)
 	rootOut, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").CombinedOutput()
 	if err != nil {
@@ -271,7 +399,6 @@ func (b *GitLFSBackend) Pull(ctx context.Context, localPath string) error {
 	}
 	gitRoot := strings.TrimSpace(string(rootOut))
 
-	// Fetch the sync branch from the remote before checking for it locally.
 	if err := runCmd(ctx, gitRoot, "git", "fetch", b.remote, b.branch); err != nil {
 		return fmt.Errorf("fetch sync branch %q from %q: %w", b.branch, b.remote, err)
 	}
@@ -279,7 +406,6 @@ func (b *GitLFSBackend) Pull(ctx context.Context, localPath string) error {
 	worktreeDir := filepath.Join(os.TempDir(), fmt.Sprintf("tt-pull-%d", os.Getpid()))
 	defer os.RemoveAll(worktreeDir)
 
-	// Check out from the remote tracking ref so we get the latest fetched state.
 	remoteRef := b.remote + "/" + b.branch
 	if err := runCmd(ctx, gitRoot, "git", "worktree", "add", "--force", worktreeDir, remoteRef); err != nil {
 		return err
