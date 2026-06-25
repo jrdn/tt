@@ -9,6 +9,44 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+var validStatuses = map[Status]bool{
+	StatusBacklog:    true,
+	StatusOpen:       true,
+	StatusReady:      true,
+	StatusInProgress: true,
+	StatusInReview:   true,
+	StatusDone:       true,
+	StatusCancelled:  true,
+}
+
+func validateStatus(s Status) error {
+	if !validStatuses[s] {
+		return fmt.Errorf("invalid status %q: must be one of backlog, open, ready, in_progress, in_review, done, cancelled", s)
+	}
+	return nil
+}
+
+func validatePriority(p int) error {
+	if p < 0 || p > 3 {
+		return fmt.Errorf("invalid priority %d: must be 0–3 (0=critical, 3=low)", p)
+	}
+	return nil
+}
+
+func validateDueDate(d string) error {
+	if _, err := time.Parse("2006-01-02", d); err != nil {
+		return fmt.Errorf("invalid due date %q: must be YYYY-MM-DD", d)
+	}
+	return nil
+}
+
+func validateParent(db *sqlx.DB, parentID string) error {
+	if _, err := Get(db, parentID); err != nil {
+		return fmt.Errorf("parent task %q not found", parentID)
+	}
+	return nil
+}
+
 type Status string
 
 const (
@@ -59,6 +97,22 @@ func touchTask(db *sqlx.DB, id string) {
 }
 
 func Create(db *sqlx.DB, title string, opts CreateOpts) (*Task, error) {
+	if opts.PrioritySet {
+		if err := validatePriority(opts.Priority); err != nil {
+			return nil, err
+		}
+	}
+	if opts.ParentID != nil {
+		if err := validateParent(db, *opts.ParentID); err != nil {
+			return nil, err
+		}
+	}
+	if opts.DueDate != nil {
+		if err := validateDueDate(*opts.DueDate); err != nil {
+			return nil, err
+		}
+	}
+
 	id := NewID()
 	ts := now()
 	t := &Task{
@@ -162,6 +216,27 @@ type UpdateOpts struct {
 }
 
 func Update(db *sqlx.DB, prefix string, opts UpdateOpts) (*Task, error) {
+	if opts.Status != nil {
+		if err := validateStatus(*opts.Status); err != nil {
+			return nil, err
+		}
+	}
+	if opts.Priority != nil {
+		if err := validatePriority(*opts.Priority); err != nil {
+			return nil, err
+		}
+	}
+	if opts.ParentID != nil {
+		if err := validateParent(db, *opts.ParentID); err != nil {
+			return nil, err
+		}
+	}
+	if opts.DueDate != nil {
+		if err := validateDueDate(*opts.DueDate); err != nil {
+			return nil, err
+		}
+	}
+
 	t, err := Get(db, prefix)
 	if err != nil {
 		return nil, err

@@ -537,3 +537,105 @@ func TestRelations_Idempotent(t *testing.T) {
 		t.Errorf("expected 1 relation after duplicate insert, got %d", len(rels))
 	}
 }
+
+func TestUpdate_InvalidStatus(t *testing.T) {
+	d := openTestDB(t)
+	task, _ := Create(d, "task", CreateOpts{})
+	garbage := Status("GARBAGE")
+	_, err := Update(d, task.ID, UpdateOpts{Status: &garbage})
+	if err == nil {
+		t.Error("expected error for invalid status, got nil")
+	}
+}
+
+func TestUpdate_ValidStatuses(t *testing.T) {
+	d := openTestDB(t)
+	validStatuses := []Status{StatusBacklog, StatusOpen, StatusReady, StatusInProgress, StatusInReview, StatusDone, StatusCancelled}
+	for _, s := range validStatuses {
+		task, _ := Create(d, "task", CreateOpts{})
+		st := s
+		if _, err := Update(d, task.ID, UpdateOpts{Status: &st}); err != nil {
+			t.Errorf("Update with status=%q should not error: %v", s, err)
+		}
+	}
+}
+
+func TestUpdate_InvalidPriority(t *testing.T) {
+	d := openTestDB(t)
+	task, _ := Create(d, "task", CreateOpts{})
+	for _, bad := range []int{-1, 4, 100} {
+		p := bad
+		_, err := Update(d, task.ID, UpdateOpts{Priority: &p})
+		if err == nil {
+			t.Errorf("expected error for priority=%d, got nil", bad)
+		}
+	}
+}
+
+func TestUpdate_ValidPriorities(t *testing.T) {
+	d := openTestDB(t)
+	for _, p := range []int{0, 1, 2, 3} {
+		task, _ := Create(d, "task", CreateOpts{})
+		pri := p
+		if _, err := Update(d, task.ID, UpdateOpts{Priority: &pri}); err != nil {
+			t.Errorf("Update with priority=%d should not error: %v", p, err)
+		}
+	}
+}
+
+func TestUpdate_InvalidParent(t *testing.T) {
+	d := openTestDB(t)
+	task, _ := Create(d, "task", CreateOpts{})
+	nonexistent := "zzzzzzz"
+	_, err := Update(d, task.ID, UpdateOpts{ParentID: &nonexistent})
+	if err == nil {
+		t.Error("expected error for nonexistent parent, got nil")
+	}
+}
+
+func TestUpdate_ValidParent(t *testing.T) {
+	d := openTestDB(t)
+	parent, _ := Create(d, "parent", CreateOpts{})
+	child, _ := Create(d, "child", CreateOpts{})
+	if _, err := Update(d, child.ID, UpdateOpts{ParentID: &parent.ID}); err != nil {
+		t.Errorf("Update with valid parent should not error: %v", err)
+	}
+}
+
+func TestUpdate_InvalidDueDate(t *testing.T) {
+	d := openTestDB(t)
+	task, _ := Create(d, "task", CreateOpts{})
+	bad := "not-a-date"
+	_, err := Update(d, task.ID, UpdateOpts{DueDate: &bad})
+	if err == nil {
+		t.Error("expected error for invalid due date, got nil")
+	}
+}
+
+func TestCreate_InvalidPriority(t *testing.T) {
+	d := openTestDB(t)
+	for _, bad := range []int{-1, 4, 100} {
+		_, err := Create(d, "task", CreateOpts{Priority: bad, PrioritySet: true})
+		if err == nil {
+			t.Errorf("expected error for priority=%d on create, got nil", bad)
+		}
+	}
+}
+
+func TestCreate_InvalidParent(t *testing.T) {
+	d := openTestDB(t)
+	nonexistent := "zzzzzzz"
+	_, err := Create(d, "task", CreateOpts{ParentID: &nonexistent})
+	if err == nil {
+		t.Error("expected error for nonexistent parent on create, got nil")
+	}
+}
+
+func TestCreate_InvalidDueDate(t *testing.T) {
+	d := openTestDB(t)
+	bad := "2026/06/25"
+	_, err := Create(d, "task", CreateOpts{DueDate: &bad})
+	if err == nil {
+		t.Error("expected error for invalid due date on create, got nil")
+	}
+}
