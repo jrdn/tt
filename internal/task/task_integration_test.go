@@ -639,3 +639,111 @@ func TestCreate_InvalidDueDate(t *testing.T) {
 		t.Error("expected error for invalid due date on create, got nil")
 	}
 }
+
+func TestExternalRefs_UpsertAndGet(t *testing.T) {
+	d := openTestDB(t)
+	tsk, _ := Create(d, "task 1", CreateOpts{})
+	url := "https://linear.app/issue/ENG-123"
+
+	if err := UpsertExternalRef(d, tsk.ID, "linear", "ENG-123", &url); err != nil {
+		t.Fatalf("UpsertExternalRef: %v", err)
+	}
+
+	refs, err := GetExternalRefs(d, tsk.ID)
+	if err != nil {
+		t.Fatalf("GetExternalRefs: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 ref, got %d", len(refs))
+	}
+	if refs[0].Source != "linear" || refs[0].ExternalID != "ENG-123" {
+		t.Errorf("unexpected ref: %+v", refs[0])
+	}
+	if refs[0].URL == nil || *refs[0].URL != url {
+		t.Errorf("url = %v, want %q", refs[0].URL, url)
+	}
+}
+
+func TestExternalRefs_UpsertWithoutURL(t *testing.T) {
+	d := openTestDB(t)
+	tsk, _ := Create(d, "task 1", CreateOpts{})
+
+	if err := UpsertExternalRef(d, tsk.ID, "github", "42", nil); err != nil {
+		t.Fatalf("UpsertExternalRef: %v", err)
+	}
+
+	refs, _ := GetExternalRefs(d, tsk.ID)
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 ref, got %d", len(refs))
+	}
+	if refs[0].URL != nil {
+		t.Errorf("expected nil url, got %v", refs[0].URL)
+	}
+}
+
+func TestExternalRefs_UpsertUpdatesURL(t *testing.T) {
+	d := openTestDB(t)
+	tsk, _ := Create(d, "task 1", CreateOpts{})
+	url1 := "https://linear.app/issue/ENG-123"
+	url2 := "https://linear.app/issue/ENG-123-renamed"
+
+	UpsertExternalRef(d, tsk.ID, "linear", "ENG-123", &url1)
+	if err := UpsertExternalRef(d, tsk.ID, "linear", "ENG-123", &url2); err != nil {
+		t.Fatalf("second UpsertExternalRef: %v", err)
+	}
+
+	refs, _ := GetExternalRefs(d, tsk.ID)
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 ref after re-upsert, got %d", len(refs))
+	}
+	if refs[0].URL == nil || *refs[0].URL != url2 {
+		t.Errorf("url = %v, want %q", refs[0].URL, url2)
+	}
+}
+
+func TestExternalRefs_UpsertRepointsTask(t *testing.T) {
+	d := openTestDB(t)
+	t1, _ := Create(d, "task 1", CreateOpts{})
+	t2, _ := Create(d, "task 2", CreateOpts{})
+
+	UpsertExternalRef(d, t1.ID, "linear", "ENG-123", nil)
+	if err := UpsertExternalRef(d, t2.ID, "linear", "ENG-123", nil); err != nil {
+		t.Fatalf("re-point UpsertExternalRef: %v", err)
+	}
+
+	refs1, _ := GetExternalRefs(d, t1.ID)
+	if len(refs1) != 0 {
+		t.Errorf("expected ref moved off t1, got %d refs", len(refs1))
+	}
+	refs2, _ := GetExternalRefs(d, t2.ID)
+	if len(refs2) != 1 {
+		t.Fatalf("expected ref moved onto t2, got %d refs", len(refs2))
+	}
+
+	found, err := FindByExternalRef(d, "linear", "ENG-123")
+	if err != nil {
+		t.Fatalf("FindByExternalRef: %v", err)
+	}
+	if found.ID != t2.ID {
+		t.Errorf("FindByExternalRef returned %s, want %s", found.ID, t2.ID)
+	}
+}
+
+func TestFindByExternalRef_NotFound(t *testing.T) {
+	d := openTestDB(t)
+	if _, err := FindByExternalRef(d, "linear", "ENG-999"); err == nil {
+		t.Error("expected error for unknown external ref")
+	}
+}
+
+func TestGetExternalRefs_Empty(t *testing.T) {
+	d := openTestDB(t)
+	tsk, _ := Create(d, "task 1", CreateOpts{})
+	refs, err := GetExternalRefs(d, tsk.ID)
+	if err != nil {
+		t.Fatalf("GetExternalRefs: %v", err)
+	}
+	if len(refs) != 0 {
+		t.Errorf("expected 0 refs, got %d", len(refs))
+	}
+}

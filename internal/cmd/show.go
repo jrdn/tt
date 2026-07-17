@@ -36,7 +36,7 @@ func newShowCmd() *cobra.Command {
 The ID can be a plain task ID (resolved in the current repo's database)
 or a qualified ID in the form <db_name>.<task_id> to look up in a
 specific database (e.g. "myrepo.a3B7xK").`,
-		Args:  cobra.ExactArgs(1),
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			qt, err := resolveTask(args[0])
 			if err != nil {
@@ -52,14 +52,16 @@ specific database (e.g. "myrepo.a3B7xK").`,
 			subtasks, _ := task.List(qt.database, task.ListOpts{ParentID: t.ID})
 			rels, _ := task.GetRelations(qt.database, t.ID)
 			comments, _ := task.GetComments(qt.database, t.ID)
+			extRefs, _ := task.GetExternalRefs(qt.database, t.ID)
 
 			if jsonOutput {
 				return printJSON(struct {
-					Task      *task.Task       `json:"task"`
-					Subtasks  []task.Task      `json:"subtasks"`
-					Relations []task.Relation  `json:"relations"`
-					Comments  []task.Comment   `json:"comments"`
-				}{t, subtasks, rels, comments})
+					Task         *task.Task         `json:"task"`
+					Subtasks     []task.Task        `json:"subtasks"`
+					Relations    []task.Relation    `json:"relations"`
+					Comments     []task.Comment     `json:"comments"`
+					ExternalRefs []task.ExternalRef `json:"external_refs"`
+				}{t, subtasks, rels, comments, extRefs})
 			}
 
 			fmt.Printf("ID:      %s\n", t.ID)
@@ -102,6 +104,17 @@ specific database (e.g. "myrepo.a3B7xK").`,
 						fmt.Printf("  %s → %s %s\n", t.ID, r.Type, r.ToID)
 					} else {
 						fmt.Printf("  %s ← %s %s\n", r.FromID, inverseRelation(r.Type), t.ID)
+					}
+				}
+			}
+
+			if len(extRefs) > 0 {
+				fmt.Println("\nExternal refs:")
+				for _, r := range extRefs {
+					if r.URL != nil && *r.URL != "" {
+						fmt.Printf("  %s:%s  %s\n", r.Source, r.ExternalID, *r.URL)
+					} else {
+						fmt.Printf("  %s:%s\n", r.Source, r.ExternalID)
 					}
 				}
 			}
