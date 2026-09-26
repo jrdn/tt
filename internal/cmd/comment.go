@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os/user"
 
-	"github.com/jrdn/tt/internal/task"
 	"github.com/spf13/cobra"
 )
 
@@ -35,7 +34,7 @@ The ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
 			if author != "" {
 				authorPtr = &author
 			}
-			c, err := task.AddComment(qt.database, qt.id, args[1], authorPtr)
+			c, err := qt.store.AddComment(cmd.Context(), qt.id, args[1], authorPtr)
 			if err != nil {
 				return err
 			}

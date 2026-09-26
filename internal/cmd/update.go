@@ -58,7 +58,7 @@ Each ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
 				if err != nil {
 					return err
 				}
-				t, err := task.Update(qt.database, qt.id, opts)
+				t, err := qt.store.Update(cmd.Context(), qt.id, opts)
 				qt.Close()
 				if err != nil {
 					return err

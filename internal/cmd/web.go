@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jmoiron/sqlx"
 	"github.com/jrdn/tt/internal/task"
 	"github.com/spf13/cobra"
 	"github.com/yuin/goldmark"
@@ -20,7 +19,7 @@ import (
 var webUI string
 
 type webServer struct {
-	db *sqlx.DB
+	store task.Store
 }
 
 func mdToHTML(s string) string {
@@ -68,7 +67,7 @@ func (s *webServer) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		All:      q.Get("all") == "1",
 		Ready:    q.Get("ready") == "1",
 	}
-	tasks, err := task.List(s.db, opts)
+	tasks, err := s.store.List(r.Context(), opts)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -78,20 +77,20 @@ func (s *webServer) handleListTasks(w http.ResponseWriter, r *http.Request) {
 
 func (s *webServer) handleGetTask(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	t, err := task.Get(s.db, id)
+	t, err := s.store.Get(r.Context(), id)
 	if err != nil {
 		writeErr(w, 404, err.Error())
 		return
 	}
-	subtasks, _ := task.List(s.db, task.ListOpts{ParentID: t.ID, All: true})
+	subtasks, _ := s.store.List(r.Context(), task.ListOpts{ParentID: t.ID, All: true})
 	if subtasks == nil {
 		subtasks = []task.Task{}
 	}
-	rels, _ := task.GetRelations(s.db, t.ID)
+	rels, _ := s.store.GetRelations(r.Context(), t.ID)
 	if rels == nil {
 		rels = []task.Relation{}
 	}
-	rawComments, _ := task.GetComments(s.db, t.ID)
+	rawComments, _ := s.store.GetComments(r.Context(), t.ID)
 
 	comments := make([]webCommentDetail, len(rawComments))
 	for i, c := range rawComments {
@@ -119,7 +118,7 @@ func (s *webServer) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	t, err := task.Get(s.db, id)
+	t, err := s.store.Get(r.Context(), id)
 	if err != nil {
 		writeErr(w, 404, err.Error())
 		return
@@ -169,7 +168,7 @@ func (s *webServer) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	t.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := task.Save(s.db, t); err != nil {
+	if err := s.store.Save(r.Context(), t); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
@@ -190,7 +189,7 @@ func (s *webServer) handleAddComment(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "body is required")
 		return
 	}
-	c, err := task.AddComment(s.db, id, body.Body, body.Author)
+	c, err := s.store.AddComment(r.Context(), id, body.Body, body.Author)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -225,7 +224,7 @@ func (s *webServer) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		opts.Priority = *body.Priority
 		opts.PrioritySet = true
 	}
-	t, err := task.Create(s.db, body.Title, opts)
+	t, err := s.store.Create(r.Context(), body.Title, opts)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -233,7 +232,7 @@ func (s *webServer) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	// task.Create always sets status=open; apply a different status if requested
 	if body.Status != nil && *body.Status != string(task.StatusOpen) {
 		st := task.Status(*body.Status)
-		t, err = task.Update(s.db, t.ID, task.UpdateOpts{Status: &st})
+		t, err = s.store.Update(r.Context(), t.ID, task.UpdateOpts{Status: &st})
 		if err != nil {
 			writeErr(w, 500, err.Error())
 			return
@@ -264,7 +263,7 @@ func (s *webServer) handleAddRelation(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "type must be one of: blocks, duplicates, related")
 		return
 	}
-	if err := task.AddRelation(s.db, id, body.Type, body.TargetID); err != nil {
+	if err := s.store.AddRelation(r.Context(), id, body.Type, body.TargetID); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
@@ -276,7 +275,7 @@ func (s *webServer) handleRemoveRelation(w http.ResponseWriter, r *http.Request)
 	from  := r.PathValue("from")
 	rtype := r.PathValue("rtype")
 	to    := r.PathValue("to")
-	if err := task.RemoveRelation(s.db, from, rtype, to); err != nil {
+	if err := s.store.RemoveRelation(r.Context(), from, rtype, to); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
@@ -289,7 +288,7 @@ func (s *webServer) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"tasks": []task.Task{}})
 		return
 	}
-	tasks, err := task.Search(s.db, q)
+	tasks, err := s.store.Search(r.Context(), q)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -301,8 +300,8 @@ func (s *webServer) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *webServer) handleRecentTasks(w http.ResponseWriter, r *http.Request) {
-	var tasks []task.Task
-	if err := s.db.Select(&tasks, `SELECT * FROM tasks ORDER BY updated_at DESC LIMIT 5`); err != nil {
+	tasks, err := s.store.Recent(r.Context(), 5)
+	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
@@ -318,7 +317,7 @@ func newWebCmd() *cobra.Command {
 		Use:   "web",
 		Short: "Start a local web UI",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			srv := &webServer{db: db}
+			srv := &webServer{store: store}
 			mux := http.NewServeMux()
 			mux.HandleFunc("GET /{$}", srv.handleIndex)
 			mux.HandleFunc("GET /api/search", srv.handleSearch)

@@ -67,7 +67,7 @@ Examples:
 			}
 
 			for _, issue := range issues {
-				existing, _ := task.FindByExternalRef(db, "linear", issue.ID)
+				existing, _ := store.FindByExternalRef(cmd.Context(), "linear", issue.ID)
 				if existing != nil {
 					if dryRun {
 						fmt.Printf("skip  %s — already imported as %s\n", issue.Identifier, existing.ID)
@@ -96,7 +96,7 @@ Examples:
 					opts.DueDate = &issue.DueDate
 				}
 
-				t, err := task.Create(db, issue.Title, opts)
+				t, err := store.Create(cmd.Context(), issue.Title, opts)
 				if err != nil {
 					return fmt.Errorf("create task for %s: %w", issue.Identifier, err)
 				}
@@ -104,13 +104,13 @@ Examples:
 				// Update status to match Linear's state
 				s := linearStatus(issue.State.Type)
 				if s != task.StatusOpen {
-					if _, err := task.Update(db, t.ID, task.UpdateOpts{Status: &s}); err != nil {
+					if _, err := store.Update(cmd.Context(), t.ID, task.UpdateOpts{Status: &s}); err != nil {
 						return fmt.Errorf("set status for %s: %w", issue.Identifier, err)
 					}
 				}
 
 				url := "https://linear.app/issue/" + issue.Identifier
-				if err := task.UpsertExternalRef(db, t.ID, "linear", issue.ID, &url); err != nil {
+				if err := store.UpsertExternalRef(cmd.Context(), t.ID, "linear", issue.ID, &url); err != nil {
 					return fmt.Errorf("save external ref for %s: %w", issue.Identifier, err)
 				}
 

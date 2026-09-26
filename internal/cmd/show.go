@@ -44,14 +44,14 @@ specific database (e.g. "myrepo.a3B7xK").`,
 			}
 			defer qt.Close()
 
-			t, err := task.Get(qt.database, qt.id)
+			t, err := qt.store.Get(cmd.Context(), qt.id)
 			if err != nil {
 				return err
 			}
 
-			subtasks, _ := task.List(qt.database, task.ListOpts{ParentID: t.ID})
-			rels, _ := task.GetRelations(qt.database, t.ID)
-			comments, _ := task.GetComments(qt.database, t.ID)
+			subtasks, _ := qt.store.List(cmd.Context(), task.ListOpts{ParentID: t.ID})
+			rels, _ := qt.store.GetRelations(cmd.Context(), t.ID)
+			comments, _ := qt.store.GetComments(cmd.Context(), t.ID)
 
 			if jsonOutput {
 				return printJSON(struct {

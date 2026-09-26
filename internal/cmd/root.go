@@ -6,14 +6,18 @@ import (
 	"os"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/jrdn/tt/internal/task"
 	"github.com/spf13/cobra"
 )
 
+// db is the raw SQLite handle, still used by sync for checkpoints and meta.
 var db *sqlx.DB
+var store task.Store
 var jsonOutput bool
 
 func NewRoot(database *sqlx.DB) *cobra.Command {
 	db = database
+	store = task.NewSQLiteStore(database)
 
 	root := &cobra.Command{
 		Use:   "tt",

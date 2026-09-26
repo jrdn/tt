@@ -1,12 +1,12 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/jmoiron/sqlx"
 	"github.com/jrdn/tt/internal/task"
 )
 
@@ -36,7 +36,7 @@ const (
 )
 
 type Model struct {
-	db          *sqlx.DB
+	store       task.Store
 	view        view
 	list        listModel
 	detail      detailModel
@@ -62,9 +62,9 @@ type Model struct {
 	showHelp bool
 }
 
-func NewModel(db *sqlx.DB) Model {
+func NewModel(store task.Store) Model {
 	return Model{
-		db:            db,
+		store:         store,
 		view:          viewList,
 		statusChoices: []string{"open", "backlog", "ready", "in_progress", "in_review", "done", "cancelled"},
 	}
@@ -77,7 +77,7 @@ func (m Model) Init() tea.Cmd {
 func (m Model) loadTasks() tea.Cmd {
 	return func() tea.Msg {
 		opts := task.ListOpts{All: true}
-		tasks, err := task.List(m.db, opts)
+		tasks, err := m.store.List(context.Background(), opts)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -87,13 +87,13 @@ func (m Model) loadTasks() tea.Cmd {
 
 func (m Model) loadDetail(id string) tea.Cmd {
 	return func() tea.Msg {
-		t, err := task.Get(m.db, id)
+		t, err := m.store.Get(context.Background(), id)
 		if err != nil {
 			return errMsg{err}
 		}
-		subtasks, _ := task.List(m.db, task.ListOpts{ParentID: id, All: true})
-		relations, _ := task.GetRelations(m.db, t.ID)
-		comments, _ := task.GetComments(m.db, t.ID)
+		subtasks, _ := m.store.List(context.Background(), task.ListOpts{ParentID: id, All: true})
+		relations, _ := m.store.GetRelations(context.Background(), t.ID)
+		comments, _ := m.store.GetComments(context.Background(), t.ID)
 		return taskDetailMsg{showResult{
 			Task:      *t,
 			Subtasks:  subtasks,
@@ -399,12 +399,12 @@ func (m Model) handleInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) cmdDone(id string) tea.Cmd {
 	return func() tea.Msg {
-		t, err := task.Get(m.db, id)
+		t, err := m.store.Get(context.Background(), id)
 		if err != nil {
 			return errMsg{err}
 		}
 		done := task.StatusDone
-		_, err = task.Update(m.db, t.ID, task.UpdateOpts{Status: &done})
+		_, err = m.store.Update(context.Background(), t.ID, task.UpdateOpts{Status: &done})
 		if err != nil {
 			return errMsg{err}
 		}
@@ -415,7 +415,7 @@ func (m Model) cmdDone(id string) tea.Cmd {
 func (m Model) cmdSetStatus(id, status string) tea.Cmd {
 	return func() tea.Msg {
 		s := task.Status(status)
-		_, err := task.Update(m.db, id, task.UpdateOpts{Status: &s})
+		_, err := m.store.Update(context.Background(), id, task.UpdateOpts{Status: &s})
 		if err != nil {
 			return errMsg{err}
 		}
@@ -425,7 +425,7 @@ func (m Model) cmdSetStatus(id, status string) tea.Cmd {
 
 func (m Model) cmdComment(id, body string) tea.Cmd {
 	return func() tea.Msg {
-		_, err := task.AddComment(m.db, id, body, nil)
+		_, err := m.store.AddComment(context.Background(), id, body, nil)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -435,7 +435,7 @@ func (m Model) cmdComment(id, body string) tea.Cmd {
 
 func (m Model) cmdCreate(title string) tea.Cmd {
 	return func() tea.Msg {
-		_, err := task.Create(m.db, title, task.CreateOpts{})
+		_, err := m.store.Create(context.Background(), title, task.CreateOpts{})
 		if err != nil {
 			return errMsg{err}
 		}

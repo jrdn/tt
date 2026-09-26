@@ -35,7 +35,7 @@ Use this as the entry point for an agent work loop:
 				return fmt.Errorf("specify --as <handle> or set: git config tt.handle <handle>")
 			}
 
-			t, err := task.Next(db, handle)
+			t, err := store.Next(cmd.Context(), handle)
 			if err != nil {
 				return err
 			}
@@ -44,9 +44,9 @@ Use this as the entry point for an agent work loop:
 				os.Exit(1)
 			}
 
-			subtasks, _ := task.List(db, task.ListOpts{ParentID: t.ID})
-			rels, _ := task.GetRelations(db, t.ID)
-			comments, _ := task.GetComments(db, t.ID)
+			subtasks, _ := store.List(cmd.Context(), task.ListOpts{ParentID: t.ID})
+			rels, _ := store.GetRelations(cmd.Context(), t.ID)
+			comments, _ := store.GetComments(cmd.Context(), t.ID)
 
 			if jsonOutput {
 				return printJSON(struct {

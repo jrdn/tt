@@ -13,7 +13,7 @@ func newTuiCmd() *cobra.Command {
 		Short: "Interactive TUI",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			m := tui.NewModel(db)
+			m := tui.NewModel(store)
 			p := tea.NewProgram(m, tea.WithAltScreen())
 			_, err := p.Run()
 			return err

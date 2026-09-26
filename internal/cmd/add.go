@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,7 +29,7 @@ func newAddCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// No title: open editor with blank template
 			if len(args) == 0 {
-				return addFromEditor()
+				return addFromEditor(cmd.Context())
 			}
 
 			title := args[0]
@@ -55,7 +56,7 @@ func newAddCmd() *cobra.Command {
 				opts.DueDate = &dueDate
 			}
 
-			t, err := task.Create(db, title, opts)
+			t, err := store.Create(cmd.Context(), title, opts)
 			if err != nil {
 				return err
 			}
@@ -81,7 +82,7 @@ func newAddCmd() *cobra.Command {
 	return cmd
 }
 
-func addFromEditor() error {
+func addFromEditor(ctx context.Context) error {
 	stub := &task.Task{Status: task.StatusOpen, Priority: 2}
 	template := serializeTask(stub)
 
@@ -130,7 +131,7 @@ func addFromEditor() error {
 		Assignee:    parsed.Assignee,
 		DueDate:     parsed.DueDate,
 	}
-	t, err := task.Create(db, parsed.Title, opts)
+	t, err := store.Create(ctx, parsed.Title, opts)
 	if err != nil {
 		return err
 	}

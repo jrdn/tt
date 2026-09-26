@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/fatih/color"
-	"github.com/jrdn/tt/internal/task"
 	"github.com/spf13/cobra"
 )
 
@@ -15,7 +14,7 @@ func newSearchCmd() *cobra.Command {
 		Short:   "Fuzzy-search tasks by title, description, or comment",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			tasks, err := task.Search(db, args[0])
+			tasks, err := store.Search(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}

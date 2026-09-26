@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/jrdn/tt/internal/task"
 	"github.com/spf13/cobra"
 )
 
@@ -32,7 +31,7 @@ Each ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
 				return err
 			}
 			defer toQt.Close()
-			if err := task.RemoveRelation(fromQt.database, fromQt.id, relType, toQt.id); err != nil {
+			if err := fromQt.store.RemoveRelation(cmd.Context(), fromQt.id, relType, toQt.id); err != nil {
 				return err
 			}
 			fmt.Printf("removed %s %s %s\n", args[0], relType, args[2])

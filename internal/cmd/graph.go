@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/fatih/color"
@@ -25,7 +26,7 @@ func newGraphCmd() *cobra.Command {
 		Use:   "graph",
 		Short: "Show tasks as a relationship graph",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			tasks, err := task.List(db, task.ListOpts{
+			tasks, err := store.List(cmd.Context(), task.ListOpts{
 				Status:   status,
 				Assignee: assignee,
 				All:      all,
@@ -37,7 +38,7 @@ func newGraphCmd() *cobra.Command {
 				fmt.Println("no tasks")
 				return nil
 			}
-			return renderGraph(tasks)
+			return renderGraph(cmd.Context(), tasks)
 		},
 	}
 
@@ -54,7 +55,7 @@ type graphCtx struct {
 	relsOf     map[string][]task.Relation
 }
 
-func renderGraph(tasks []task.Task) error {
+func renderGraph(ctx context.Context, tasks []task.Task) error {
 	byID := map[string]*task.Task{}
 	for i := range tasks {
 		byID[tasks[i].ID] = &tasks[i]
@@ -75,7 +76,7 @@ func renderGraph(tasks []task.Task) error {
 	relsOf := map[string][]task.Relation{}
 	missing := map[string]struct{}{}
 	for _, t := range tasks {
-		all, err := task.GetRelations(db, t.ID)
+		all, err := store.GetRelations(ctx, t.ID)
 		if err != nil {
 			return err
 		}
@@ -89,7 +90,7 @@ func renderGraph(tasks []task.Task) error {
 		}
 	}
 	for id := range missing {
-		if t, err := task.Get(db, id); err == nil {
+		if t, err := store.Get(ctx, id); err == nil {
 			byID[id] = t
 		}
 	}

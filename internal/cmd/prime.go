@@ -35,7 +35,7 @@ func newPrimeCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Println(ttOverview)
 
-			inProgress, err := task.List(db, task.ListOpts{Status: "in_progress"})
+			inProgress, err := store.List(cmd.Context(), task.ListOpts{Status: "in_progress"})
 			if err != nil {
 				return err
 			}
@@ -53,7 +53,7 @@ func newPrimeCmd() *cobra.Command {
 				if t.Description != nil && *t.Description != "" {
 					fmt.Printf("  %s\n", *t.Description)
 				}
-				comments, _ := task.GetComments(db, t.ID)
+				comments, _ := store.GetComments(cmd.Context(), t.ID)
 				last := comments
 				if len(last) > 2 {
 					last = last[len(last)-2:]
@@ -67,7 +67,7 @@ func newPrimeCmd() *cobra.Command {
 				}
 			}
 
-			ready, err := task.List(db, task.ListOpts{Ready: true})
+			ready, err := store.List(cmd.Context(), task.ListOpts{Ready: true})
 			if err != nil {
 				return err
 			}

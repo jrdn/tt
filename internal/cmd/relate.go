@@ -37,15 +37,15 @@ Cross-database relations are not supported — both tasks must be in the same da
 			}
 			defer toQt.Close()
 
-			from, err := task.Get(fromQt.database, fromQt.id)
+			from, err := fromQt.store.Get(cmd.Context(), fromQt.id)
 			if err != nil {
 				return fmt.Errorf("from: %w", err)
 			}
-			to, err := task.Get(toQt.database, toQt.id)
+			to, err := toQt.store.Get(cmd.Context(), toQt.id)
 			if err != nil {
 				return fmt.Errorf("to: %w", err)
 			}
-			if err := task.AddRelation(fromQt.database, fromQt.id, relType, toQt.id); err != nil {
+			if err := fromQt.store.AddRelation(cmd.Context(), fromQt.id, relType, toQt.id); err != nil {
 				return err
 			}
 			if jsonOutput {

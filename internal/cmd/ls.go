@@ -41,7 +41,7 @@ func newLsCmd() *cobra.Command {
 		Aliases: []string{"l"},
 		Short:   "List tasks (open and in_progress by default)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			tasks, err := task.List(db, task.ListOpts{
+			tasks, err := store.List(cmd.Context(), task.ListOpts{
 				Status:   status,
 				ParentID: parentID,
 				Assignee: assignee,

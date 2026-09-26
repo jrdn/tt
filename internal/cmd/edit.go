@@ -27,7 +27,7 @@ The ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
 			}
 			defer qt.Close()
 
-			t, err := task.Get(qt.database, qt.id)
+			t, err := qt.store.Get(cmd.Context(), qt.id)
 			if err != nil {
 				return err
 			}
@@ -67,7 +67,7 @@ The ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
 			}
 
 			updated.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-			if err := task.Save(qt.database, updated); err != nil {
+			if err := qt.store.Save(cmd.Context(), updated); err != nil {
 				return err
 			}
 

@@ -205,6 +205,13 @@ func List(db *sqlx.DB, opts ListOpts) ([]Task, error) {
 	return tasks, err
 }
 
+// Recent returns the most recently updated tasks, newest first.
+func Recent(db *sqlx.DB, limit int) ([]Task, error) {
+	var tasks []Task
+	err := db.Select(&tasks, `SELECT * FROM tasks ORDER BY updated_at DESC LIMIT ?`, limit)
+	return tasks, err
+}
+
 type UpdateOpts struct {
 	Status      *Status
 	Title       *string

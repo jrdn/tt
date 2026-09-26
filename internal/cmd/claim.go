@@ -35,7 +35,7 @@ The ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
 			}
 
 			status := task.StatusInProgress
-			t, err := task.Update(qt.database, qt.id, task.UpdateOpts{
+			t, err := qt.store.Update(cmd.Context(), qt.id, task.UpdateOpts{
 				Status:   &status,
 				Assignee: &handle,
 			})
