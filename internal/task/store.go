@@ -6,8 +6,8 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// Store is the storage backend used by the CLI, TUI and web UI. Local mode
-// uses SQLiteStore; later phases add Postgres and HTTP implementations.
+// Store is the storage backend used by the CLI, TUI and web UI. SQLStore
+// serves both local SQLite and Postgres; phase 4 adds an HTTP implementation.
 type Store interface {
 	Create(ctx context.Context, title string, opts CreateOpts) (*Task, error)
 	Get(ctx context.Context, prefix string) (*Task, error)
@@ -31,79 +31,79 @@ type Store interface {
 	Close() error
 }
 
-// SQLiteStore implements Store over a local SQLite database. It delegates to
-// the package-level functions; ctx is accepted for interface parity but not
-// yet used by the SQLite queries.
-type SQLiteStore struct {
+// SQLStore implements Store over a SQLite or Postgres database. It delegates
+// to the package-level functions, whose SQL is portable across both; ctx is
+// accepted for interface parity but not yet passed to queries.
+type SQLStore struct {
 	db *sqlx.DB
 }
 
-var _ Store = (*SQLiteStore)(nil)
+var _ Store = (*SQLStore)(nil)
 
-func NewSQLiteStore(db *sqlx.DB) *SQLiteStore {
-	return &SQLiteStore{db: db}
+func NewSQLStore(db *sqlx.DB) *SQLStore {
+	return &SQLStore{db: db}
 }
 
-func (s *SQLiteStore) Create(ctx context.Context, title string, opts CreateOpts) (*Task, error) {
+func (s *SQLStore) Create(ctx context.Context, title string, opts CreateOpts) (*Task, error) {
 	return Create(s.db, title, opts)
 }
 
-func (s *SQLiteStore) Get(ctx context.Context, prefix string) (*Task, error) {
+func (s *SQLStore) Get(ctx context.Context, prefix string) (*Task, error) {
 	return Get(s.db, prefix)
 }
 
-func (s *SQLiteStore) List(ctx context.Context, opts ListOpts) ([]Task, error) {
+func (s *SQLStore) List(ctx context.Context, opts ListOpts) ([]Task, error) {
 	return List(s.db, opts)
 }
 
-func (s *SQLiteStore) Recent(ctx context.Context, limit int) ([]Task, error) {
+func (s *SQLStore) Recent(ctx context.Context, limit int) ([]Task, error) {
 	return Recent(s.db, limit)
 }
 
-func (s *SQLiteStore) Update(ctx context.Context, prefix string, opts UpdateOpts) (*Task, error) {
+func (s *SQLStore) Update(ctx context.Context, prefix string, opts UpdateOpts) (*Task, error) {
 	return Update(s.db, prefix, opts)
 }
 
-func (s *SQLiteStore) Save(ctx context.Context, t *Task) error {
+func (s *SQLStore) Save(ctx context.Context, t *Task) error {
 	return Save(s.db, t)
 }
 
-func (s *SQLiteStore) Search(ctx context.Context, query string) ([]Task, error) {
+func (s *SQLStore) Search(ctx context.Context, query string) ([]Task, error) {
 	return Search(s.db, query)
 }
 
-func (s *SQLiteStore) Next(ctx context.Context, handle string) (*Task, error) {
+func (s *SQLStore) Next(ctx context.Context, handle string) (*Task, error) {
 	return Next(s.db, handle)
 }
 
-func (s *SQLiteStore) AddComment(ctx context.Context, taskPrefix, body string, author *string) (*Comment, error) {
+func (s *SQLStore) AddComment(ctx context.Context, taskPrefix, body string, author *string) (*Comment, error) {
 	return AddComment(s.db, taskPrefix, body, author)
 }
 
-func (s *SQLiteStore) GetComments(ctx context.Context, taskID string) ([]Comment, error) {
+func (s *SQLStore) GetComments(ctx context.Context, taskID string) ([]Comment, error) {
 	return GetComments(s.db, taskID)
 }
 
-func (s *SQLiteStore) AddRelation(ctx context.Context, fromPrefix, relType, toPrefix string) error {
+func (s *SQLStore) AddRelation(ctx context.Context, fromPrefix, relType, toPrefix string) error {
 	return AddRelation(s.db, fromPrefix, relType, toPrefix)
 }
 
-func (s *SQLiteStore) RemoveRelation(ctx context.Context, fromPrefix, relType, toPrefix string) error {
+func (s *SQLStore) RemoveRelation(ctx context.Context, fromPrefix, relType, toPrefix string) error {
 	return RemoveRelation(s.db, fromPrefix, relType, toPrefix)
 }
 
-func (s *SQLiteStore) GetRelations(ctx context.Context, taskID string) ([]Relation, error) {
+func (s *SQLStore) GetRelations(ctx context.Context, taskID string) ([]Relation, error) {
 	return GetRelations(s.db, taskID)
 }
 
-func (s *SQLiteStore) UpsertExternalRef(ctx context.Context, taskID, source, externalID string, url *string) error {
+func (s *SQLStore) UpsertExternalRef(ctx context.Context, taskID, source, externalID string, url *string) error {
 	return UpsertExternalRef(s.db, taskID, source, externalID, url)
 }
 
-func (s *SQLiteStore) FindByExternalRef(ctx context.Context, source, externalID string) (*Task, error) {
+func (s *SQLStore) FindByExternalRef(ctx context.Context, source, externalID string) (*Task, error) {
 	return FindByExternalRef(s.db, source, externalID)
 }
 
-func (s *SQLiteStore) Close() error {
+func (s *SQLStore) Close() error {
 	return s.db.Close()
 }

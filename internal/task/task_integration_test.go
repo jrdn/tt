@@ -3,6 +3,7 @@
 package task
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -12,6 +13,9 @@ import (
 
 func openTestDB(t *testing.T) *sqlx.DB {
 	t.Helper()
+	if url := os.Getenv("TT_TEST_POSTGRES_URL"); url != "" {
+		return openTestPostgres(t, url)
+	}
 	path := filepath.Join(t.TempDir(), "test.db")
 	d, err := db.OpenPath(path)
 	if err != nil {
@@ -87,7 +91,7 @@ func TestGet_LegacyShortID(t *testing.T) {
 	d := openTestDB(t)
 	// Simulate a 4-char ID from before the base62 migration by inserting directly.
 	ts := now()
-	_, err := d.Exec(`INSERT INTO tasks (id,title,status,priority,created_at,updated_at) VALUES (?,?,?,?,?,?)`,
+	_, err := d.Exec(d.Rebind(`INSERT INTO tasks (id,title,status,priority,created_at,updated_at) VALUES (?,?,?,?,?,?)`),
 		"abcd", "legacy task", StatusOpen, 2, ts, ts)
 	if err != nil {
 		t.Fatalf("insert legacy task: %v", err)

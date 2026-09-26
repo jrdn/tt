@@ -92,8 +92,24 @@ func now() string {
 	return time.Now().UTC().Format(time.RFC3339)
 }
 
+// prefixPattern builds a case-insensitive LIKE pattern for an ID prefix,
+// matched against lower(id). SQLite's LIKE ignores ASCII case but Postgres's
+// doesn't, so both sides are lowered explicitly.
+func prefixPattern(prefix string) string {
+	return strings.ToLower(prefix) + "%"
+}
+
+// forUpdateSkipLocked returns a row-locking clause on Postgres so concurrent
+// Next calls never claim the same task. SQLite serializes writers instead.
+func forUpdateSkipLocked(db *sqlx.DB) string {
+	if db.DriverName() == "pgx" {
+		return "\n\t\tFOR UPDATE SKIP LOCKED"
+	}
+	return ""
+}
+
 func touchTask(db *sqlx.DB, id string) {
-	db.Exec(`UPDATE tasks SET updated_at=? WHERE id=?`, now(), id)
+	db.Exec(db.Rebind(`UPDATE tasks SET updated_at=? WHERE id=?`), now(), id)
 }
 
 func Create(db *sqlx.DB, title string, opts CreateOpts) (*Task, error) {
@@ -151,7 +167,7 @@ type CreateOpts struct {
 
 func Get(db *sqlx.DB, prefix string) (*Task, error) {
 	var tasks []Task
-	err := db.Select(&tasks, `SELECT * FROM tasks WHERE id LIKE ? || '%'`, prefix)
+	err := db.Select(&tasks, db.Rebind(`SELECT * FROM tasks WHERE lower(id) LIKE ?`), prefixPattern(prefix))
 	if err != nil {
 		return nil, err
 	}
@@ -195,20 +211,20 @@ func List(db *sqlx.DB, opts ListOpts) ([]Task, error) {
 		args = append(args, opts.Assignee)
 	}
 	if opts.ParentID != "" {
-		query += ` AND parent_id LIKE ? || '%'`
-		args = append(args, opts.ParentID)
+		query += ` AND lower(parent_id) LIKE ?`
+		args = append(args, prefixPattern(opts.ParentID))
 	}
 	query += ` ORDER BY priority ASC, created_at ASC`
 
 	var tasks []Task
-	err := db.Select(&tasks, query, args...)
+	err := db.Select(&tasks, db.Rebind(query), args...)
 	return tasks, err
 }
 
 // Recent returns the most recently updated tasks, newest first.
 func Recent(db *sqlx.DB, limit int) ([]Task, error) {
 	var tasks []Task
-	err := db.Select(&tasks, `SELECT * FROM tasks ORDER BY updated_at DESC LIMIT ?`, limit)
+	err := db.Select(&tasks, db.Rebind(`SELECT * FROM tasks ORDER BY updated_at DESC LIMIT ?`), limit)
 	return tasks, err
 }
 
@@ -367,7 +383,7 @@ func Search(db *sqlx.DB, query string) ([]Task, error) {
 		}
 
 		var comments []Comment
-		_ = db.Select(&comments, `SELECT * FROM comments WHERE task_id=?`, t.ID)
+		_ = db.Select(&comments, db.Rebind(`SELECT * FROM comments WHERE task_id=?`), t.ID)
 		for _, c := range comments {
 			if ok, s := fuzzyScore(query, c.Body); ok {
 				if !matched || s > score {
@@ -429,7 +445,7 @@ func AddComment(db *sqlx.DB, taskPrefix, body string, author *string) (*Comment,
 
 func GetComments(db *sqlx.DB, taskID string) ([]Comment, error) {
 	var comments []Comment
-	err := db.Select(&comments, `SELECT * FROM comments WHERE task_id=? ORDER BY created_at ASC`, taskID)
+	err := db.Select(&comments, db.Rebind(`SELECT * FROM comments WHERE task_id=? ORDER BY created_at ASC`), taskID)
 	return comments, err
 }
 
@@ -442,7 +458,7 @@ func AddRelation(db *sqlx.DB, fromPrefix, relType, toPrefix string) error {
 	if err != nil {
 		return fmt.Errorf("to: %w", err)
 	}
-	_, err = db.Exec(`INSERT OR REPLACE INTO relations (from_id, to_id, type) VALUES (?,?,?)`,
+	_, err = db.Exec(db.Rebind(`INSERT INTO relations (from_id, to_id, type) VALUES (?,?,?) ON CONFLICT DO NOTHING`),
 		from.ID, to.ID, relType)
 	if err == nil {
 		touchTask(db, from.ID)
@@ -460,7 +476,7 @@ func RemoveRelation(db *sqlx.DB, fromPrefix, relType, toPrefix string) error {
 	if err != nil {
 		return fmt.Errorf("to: %w", err)
 	}
-	_, err = db.Exec(`DELETE FROM relations WHERE from_id=? AND to_id=? AND type=?`, from.ID, to.ID, relType)
+	_, err = db.Exec(db.Rebind(`DELETE FROM relations WHERE from_id=? AND to_id=? AND type=?`), from.ID, to.ID, relType)
 	if err == nil {
 		touchTask(db, from.ID)
 		touchTask(db, to.ID)
@@ -470,7 +486,7 @@ func RemoveRelation(db *sqlx.DB, fromPrefix, relType, toPrefix string) error {
 
 func GetRelations(db *sqlx.DB, taskID string) ([]Relation, error) {
 	var rels []Relation
-	err := db.Select(&rels, `SELECT * FROM relations WHERE from_id=? OR to_id=?`, taskID, taskID)
+	err := db.Select(&rels, db.Rebind(`SELECT * FROM relations WHERE from_id=? OR to_id=?`), taskID, taskID)
 	return rels, err
 }
 
@@ -484,7 +500,7 @@ func Next(db *sqlx.DB, handle string) (*Task, error) {
 	defer tx.Rollback()
 
 	var t Task
-	err = tx.Get(&t, `SELECT * FROM tasks
+	err = tx.Get(&t, tx.Rebind(`SELECT * FROM tasks
 		WHERE assignee = ? AND status IN ('open', 'ready')
 		AND NOT EXISTS (
 			SELECT 1 FROM relations r
@@ -493,7 +509,7 @@ func Next(db *sqlx.DB, handle string) (*Task, error) {
 			AND b.status NOT IN ('done', 'cancelled')
 		)
 		ORDER BY priority ASC, created_at ASC
-		LIMIT 1`, handle)
+		LIMIT 1` + forUpdateSkipLocked(db)), handle)
 	if err != nil {
 		return nil, nil // no matching task
 	}
@@ -501,7 +517,7 @@ func Next(db *sqlx.DB, handle string) (*Task, error) {
 	ts := now()
 	t.Status = StatusInProgress
 	t.UpdatedAt = ts
-	if _, err := tx.Exec(`UPDATE tasks SET status='in_progress', updated_at=? WHERE id=?`, ts, t.ID); err != nil {
+	if _, err := tx.Exec(tx.Rebind(`UPDATE tasks SET status='in_progress', updated_at=? WHERE id=?`), ts, t.ID); err != nil {
 		return nil, err
 	}
 	return &t, tx.Commit()
@@ -515,18 +531,18 @@ type ExternalRef struct {
 }
 
 func UpsertExternalRef(db *sqlx.DB, taskID, source, externalID string, url *string) error {
-	_, err := db.Exec(`INSERT INTO external_refs (task_id, source, external_id, url)
+	_, err := db.Exec(db.Rebind(`INSERT INTO external_refs (task_id, source, external_id, url)
 		VALUES (?, ?, ?, ?)
-		ON CONFLICT(source, external_id) DO UPDATE SET task_id=excluded.task_id, url=excluded.url`,
+		ON CONFLICT(source, external_id) DO UPDATE SET task_id=excluded.task_id, url=excluded.url`),
 		taskID, source, externalID, url)
 	return err
 }
 
 func FindByExternalRef(db *sqlx.DB, source, externalID string) (*Task, error) {
 	var t Task
-	err := db.Get(&t, `SELECT tasks.* FROM tasks
+	err := db.Get(&t, db.Rebind(`SELECT tasks.* FROM tasks
 		JOIN external_refs ON external_refs.task_id = tasks.id
-		WHERE external_refs.source = ? AND external_refs.external_id = ?`,
+		WHERE external_refs.source = ? AND external_refs.external_id = ?`),
 		source, externalID)
 	if err != nil {
 		return nil, err
@@ -536,6 +552,6 @@ func FindByExternalRef(db *sqlx.DB, source, externalID string) (*Task, error) {
 
 func GetExternalRefs(db *sqlx.DB, taskID string) ([]ExternalRef, error) {
 	var refs []ExternalRef
-	err := db.Select(&refs, `SELECT * FROM external_refs WHERE task_id = ?`, taskID)
+	err := db.Select(&refs, db.Rebind(`SELECT * FROM external_refs WHERE task_id = ?`), taskID)
 	return refs, err
 }

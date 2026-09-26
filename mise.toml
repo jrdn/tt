@@ -17,6 +17,22 @@ run = "go test -tags integration ./..."
 description = "Run unit and integration tests"
 run = "go test -tags integration ./..."
 
+[tasks."pg:up"]
+description = "Start a throwaway Postgres 17 in Docker on port 55432"
+run = [
+  "docker run -d --rm --name tt-pg -e POSTGRES_PASSWORD=tt -e POSTGRES_DB=tt_test -p 55432:5432 postgres:17",
+  "until docker exec tt-pg pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; do sleep 0.5; done",
+]
+
+[tasks."pg:down"]
+description = "Stop the test Postgres container"
+run = "docker rm -f tt-pg"
+
+[tasks."test:pg"]
+description = "Run integration tests against Postgres (start it with mise run pg:up)"
+env = { TT_TEST_POSTGRES_URL = "postgres://postgres:tt@localhost:55432/tt_test?sslmode=disable" }
+run = "go test -tags integration -count=1 ./internal/task/..."
+
 [tasks.run]
 description = "Run tt (pass args via -- e.g. mise run run -- ls)"
 run = "go run ./cmd/tt"

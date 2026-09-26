@@ -67,7 +67,7 @@ Use the --db flag to filter to a specific database name.`,
 					continue
 				}
 
-				tasks, err := task.NewSQLiteStore(database).List(cmd.Context(), task.ListOpts{
+				tasks, err := task.NewSQLStore(database).List(cmd.Context(), task.ListOpts{
 					Status:   status,
 					ParentID: parentID,
 					Assignee: assignee,

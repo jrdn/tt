@@ -27,7 +27,7 @@ func resolveTask(rawID string) (*qualifiedTask, error) {
 		if err != nil {
 			return nil, fmt.Errorf("open database %q: %w", dbName, err)
 		}
-		return &qualifiedTask{store: task.NewSQLiteStore(targetDB), id: taskID, opened: true}, nil
+		return &qualifiedTask{store: task.NewSQLStore(targetDB), id: taskID, opened: true}, nil
 	}
 	return &qualifiedTask{store: store, id: rawID, opened: false}, nil
 }

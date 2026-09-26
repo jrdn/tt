@@ -17,7 +17,7 @@ var jsonOutput bool
 
 func NewRoot(database *sqlx.DB) *cobra.Command {
 	db = database
-	store = task.NewSQLiteStore(database)
+	store = task.NewSQLStore(database)
 
 	root := &cobra.Command{
 		Use:   "tt",
