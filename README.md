@@ -1,10 +1,12 @@
 # tt
 
-A lightweight local-first task manager. Tasks live in a SQLite database; `tt` reads and writes it directly — no server, no daemon.
+A lightweight local-first task manager. By default tasks live in a SQLite database that `tt` reads and writes directly — no server, no daemon. Teams can instead point a repo at a shared `tt server` backed by Postgres, with logins, per-project permissions and API keys for agents.
 
 ## Design
 
 Tasks are stored in a SQLite file under `~/.config/tt/`. The CLI talks to it directly. Sync is an explicit, separate concern: pull before you start, push when you're done.
+
+For shared use, a repo can opt into [server mode](#server-mode): the same commands then work against a project on a `tt server`.
 
 ## Architecture
 
@@ -22,6 +24,13 @@ Tasks are stored in a SQLite file under `~/.config/tt/`. The CLI talks to it dir
 │       sync backend          │
 │  S3 / Git LFS / rsync / etc │
 └─────────────────────────────┘
+```
+
+In server mode the CLI, TUI and web UI talk HTTP to `tt server` instead:
+
+```
+tt CLI / TUI / web UI ──HTTPS + JWT──▶ tt server ──▶ Postgres
+                                        (one schema per project)
 ```
 
 ## Storage
@@ -124,6 +133,81 @@ tt show <id>                        # full detail view
 tt done <id>                        # mark done
 tt update <id> --status=in_progress # update any field
 ```
+
+## Server mode
+
+A repo uses a tt server when it has a `.tt.json` at its root. Commit it so teammates share the setting:
+
+```bash
+tt init --server https://tt.example.com --project myproj   # writes .tt.json
+tt login                                                   # once per machine
+```
+
+`tt login` prints a URL and a code; open the URL, sign in with GitHub, check the code matches and approve. The CLI receives an API key (90 days by default) and stores it in the OS keychain (macOS Keychain, Linux Secret Service, Windows Credential Manager). Without a keychain, or with `TT_KEYRING=off`, it goes in `credentials.json` in the tt config directory with mode 0600. `tt login --key <key>` stores an existing key instead.
+
+After that every command (`tt ls`, `tt add`, `tt next`, `tt tui`, `tt web`, …) works against the server project, with the same output as local mode. The one difference: the server records who made each change from your login, so `--author` and `--created-by` are ignored.
+
+```bash
+tt whoami                               # your handle, projects and roles
+tt project ls                           # projects you can access
+tt project create myproj                # server admins
+tt project member myproj alice member   # owners: viewer | member | owner, or --remove
+tt export > backup.json                 # every task with comments and relations
+tt logout                               # revokes the key and forgets it
+```
+
+`TT_SERVER`, `TT_PROJECT` and `TT_API_KEY` override `.tt.json` and the stored login. `tt sync` only applies to local databases.
+
+The TUI and web UI refresh live when anyone changes a task. This also works locally: `tt tui` and `tt web` pick up writes from other processes, such as agents.
+
+### Agents and API keys
+
+Agents act with their own identity, on behalf of the human who registered them:
+
+```bash
+tt agent add claude/opus4.7
+tt key create --agent claude/opus4.7 --project myproj --expires 720h   # prints the key once
+```
+
+Give the key to the agent as `TT_API_KEY`. Its changes show as `claude/opus4.7`, and the audit log records that it acted on your behalf. Agent keys are capped at `member` unless you pass `--role`. `tt key ls` lists your keys and `tt key revoke <id>` revokes one.
+
+An agent can hand a sub-agent a narrower key without contacting the server:
+
+```bash
+tt key attenuate --task ab12cde --actions task:read,comment:create --expires 2h --label sub-reviewer
+```
+
+The new key can only do less than the one it came from: fewer projects, a lower role, writes only under a task, fewer actions, an earlier expiry. Revoking a key also revokes every key derived from it. Actions: `task:read`, `task:create`, `task:edit`, `task:status`, `task:assign`, `task:claim`, `comment:create`, `relation:write`, `import`, `key:create`, `project:admin`.
+
+### Running a server
+
+`tt server` needs Postgres and a master secret; see `tt server --help` for every setting.
+
+```bash
+export TT_DATABASE_URL=postgres://tt:…@db/tt
+export TT_MASTER_KEY=$(openssl rand -base64 32)   # keep this stable and secret
+export TT_BASE_URL=https://tt.example.com
+export TT_GITHUB_CLIENT_ID=… TT_GITHUB_CLIENT_SECRET=…
+export TT_ADMINS=your-github-login
+tt server --addr :8080
+```
+
+Create a GitHub OAuth app with the callback URL `$TT_BASE_URL/auth/github/callback`. Migrations run automatically on start. Put TLS in front with a reverse proxy, and don't let it buffer responses from `/api/v1/projects/*/events`, which stream live updates.
+
+Without GitHub (local development, or bootstrapping), create users and keys directly:
+
+```bash
+tt server add-user jrdn --admin
+tt server create-key jrdn        # then: tt login --key <key>
+```
+
+To move an existing local database onto the server, keeping IDs, timestamps and authors (safe to re-run):
+
+```bash
+tt server import --project myproj --as jrdn ~/.config/tt/myrepo.db
+```
+
+Default lifetimes: API keys 1 year (`TT_KEY_DEFAULT_TTL`, capped by `TT_KEY_MAX_TTL`), `tt login` keys 90 days (`TT_LOGIN_TTL`), JWTs 1 hour (`TT_JWT_TTL`). Revoking a key, removing a member or lowering their role takes effect immediately; open live-update streams close within 30 seconds.
 
 ## Sync
 
