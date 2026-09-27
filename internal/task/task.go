@@ -401,9 +401,43 @@ func fuzzyScore(pattern, text string) (bool, int) {
 	return false, 0
 }
 
+// subsequencePattern turns a query into a LIKE pattern that matches exactly
+// the texts fuzzyScore accepts: the query's characters in order, anything in
+// between ("brsk" -> "%b%r%s%k%"). LIKE metacharacters are escaped with \.
+func subsequencePattern(query string) string {
+	var b strings.Builder
+	b.WriteByte('%')
+	for _, r := range strings.ToLower(query) {
+		if r == '%' || r == '_' || r == '\\' {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+		b.WriteByte('%')
+	}
+	return b.String()
+}
+
+// Search ranks tasks whose title, description, assignee, or any comment
+// matches query (substring or fuzzy subsequence). The database narrows the
+// candidates with a LIKE pattern; only those are loaded and scored. On
+// SQLite this needs the tt_lower function registered by the db package.
 func Search(db *sqlx.DB, query string) ([]Task, error) {
+	lower := "tt_lower"
+	if db.DriverName() == "pgx" {
+		lower = "lower"
+	}
+	like := func(col string) string { return lower + "(" + col + ") LIKE ? ESCAPE '\\'" }
+	q := `SELECT * FROM tasks WHERE ` + like("title") + ` OR ` + like("description") + ` OR ` + like("assignee") +
+		// Uncorrelated, so comments are scanned once rather than per task.
+		` OR id IN (SELECT task_id FROM comments WHERE ` + like("body") + ` OR ` + like("author") + `)
+		ORDER BY ` + insertOrder(db)
+	pat := subsequencePattern(query)
 	var all []Task
-	if err := db.Select(&all, `SELECT * FROM tasks ORDER BY `+insertOrder(db)); err != nil {
+	if err := db.Select(&all, db.Rebind(q), pat, pat, pat, pat, pat); err != nil {
+		return nil, err
+	}
+	commentsByTask, err := commentsFor(db, all)
+	if err != nil {
 		return nil, err
 	}
 
@@ -444,9 +478,7 @@ func Search(db *sqlx.DB, query string) ([]Task, error) {
 			}
 		}
 
-		var comments []Comment
-		_ = db.Select(&comments, db.Rebind(`SELECT * FROM comments WHERE task_id=?`), t.ID)
-		for _, c := range comments {
+		for _, c := range commentsByTask[t.ID] {
 			if ok, s := fuzzyScore(query, c.Body); ok {
 				if !matched || s > score {
 					score = s
@@ -483,6 +515,31 @@ func Search(db *sqlx.DB, query string) ([]Task, error) {
 		out[i] = r.task
 	}
 	return out, nil
+}
+
+// commentsFor loads the comments of the given tasks, keyed by task ID, in
+// batches small enough for any database's parameter limit.
+func commentsFor(db *sqlx.DB, tasks []Task) (map[string][]Comment, error) {
+	byTask := map[string][]Comment{}
+	const batch = 500
+	for i := 0; i < len(tasks); i += batch {
+		ids := make([]string, 0, batch)
+		for _, t := range tasks[i:min(i+batch, len(tasks))] {
+			ids = append(ids, t.ID)
+		}
+		q, args, err := sqlx.In(`SELECT * FROM comments WHERE task_id IN (?)`, ids)
+		if err != nil {
+			return nil, err
+		}
+		var cs []Comment
+		if err := db.Select(&cs, db.Rebind(q), args...); err != nil {
+			return nil, err
+		}
+		for _, c := range cs {
+			byTask[c.TaskID] = append(byTask[c.TaskID], c)
+		}
+	}
+	return byTask, nil
 }
 
 func AddComment(db *sqlx.DB, taskPrefix, body string, author *string) (*Comment, error) {
