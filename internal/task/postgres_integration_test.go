@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 
@@ -14,33 +13,19 @@ import (
 	"github.com/jrdn/tt/internal/db"
 )
 
-// openTestPostgres gives each test its own schema so tests stay isolated
-// while sharing one Postgres instance.
+// openTestPostgres gives each test its own project schema so tests stay
+// isolated while sharing one Postgres instance.
 func openTestPostgres(t *testing.T, url string) *sqlx.DB {
 	t.Helper()
-	admin, err := sqlx.Open("pgx", url)
-	if err != nil {
-		t.Fatalf("open admin conn: %v", err)
-	}
 	schema := "t_" + NewID() + NewID()
-	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
-		admin.Close()
-		t.Fatalf("create schema: %v", err)
-	}
-	t.Cleanup(func() {
-		admin.Exec("DROP SCHEMA " + schema + " CASCADE")
-		admin.Close()
-	})
-
-	sep := "?"
-	if strings.Contains(url, "?") {
-		sep = "&"
-	}
-	d, err := db.OpenPostgres(context.Background(), url+sep+"search_path="+schema)
+	d, err := db.OpenProjectSchema(context.Background(), url, schema)
 	if err != nil {
 		t.Fatalf("open postgres: %v", err)
 	}
-	t.Cleanup(func() { d.Close() })
+	t.Cleanup(func() {
+		d.Exec("DROP SCHEMA " + schema + " CASCADE")
+		d.Close()
+	})
 	return d
 }
 

@@ -16,15 +16,56 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-//go:embed migrations/postgres/*.sql
+//go:embed migrations/postgres
 var pgMigrations embed.FS
 
-// migrationLockID is an arbitrary constant for pg_advisory_xact_lock so that
-// concurrent servers don't apply migrations twice.
-const migrationLockID = 7_415_020_001
-
-// OpenPostgres connects to Postgres at url and applies pending migrations.
+// OpenPostgres connects to the server's global schema (users, projects,
+// keys) at url and applies pending global migrations.
 func OpenPostgres(ctx context.Context, url string) (*sqlx.DB, error) {
+	return openPostgres(ctx, url, "global")
+}
+
+// OpenProjectSchema connects to one project's task schema, creating it if
+// needed, and applies pending project migrations. Each project gets its own
+// schema so a missed filter can never leak tasks across projects.
+func OpenProjectSchema(ctx context.Context, url, schema string) (*sqlx.DB, error) {
+	cfg, err := pgx.ParseConfig(url)
+	if err != nil {
+		return nil, fmt.Errorf("parse postgres url: %w", err)
+	}
+	if !validSchemaName(schema) {
+		return nil, fmt.Errorf("invalid schema name %q", schema)
+	}
+	conn, err := pgx.ConnectConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("connect postgres: %w", err)
+	}
+	_, err = conn.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+schema)
+	conn.Close(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create schema: %w", err)
+	}
+	sep := "?"
+	if strings.Contains(url, "?") {
+		sep = "&"
+	}
+	return openPostgres(ctx, url+sep+"search_path="+schema, "project")
+}
+
+// validSchemaName allows only names safe to splice into SQL unquoted.
+func validSchemaName(s string) bool {
+	if s == "" || len(s) > 63 {
+		return false
+	}
+	for i, c := range s {
+		if !(c == '_' || c >= 'a' && c <= 'z' || i > 0 && c >= '0' && c <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func openPostgres(ctx context.Context, url, migrationSet string) (*sqlx.DB, error) {
 	cfg, err := pgx.ParseConfig(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse postgres url: %w", err)
@@ -44,23 +85,25 @@ func OpenPostgres(ctx context.Context, url string) (*sqlx.DB, error) {
 		d.Close()
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
-	if err := migratePostgres(ctx, d); err != nil {
+	if err := migratePostgres(ctx, d, migrationSet); err != nil {
 		d.Close()
 		return nil, fmt.Errorf("migrate postgres: %w", err)
 	}
 	return d, nil
 }
 
-// migratePostgres applies each migrations/postgres/NNNN_*.sql file not yet
-// recorded in schema_migrations, in order, in a single transaction.
-func migratePostgres(ctx context.Context, d *sqlx.DB) error {
+// migratePostgres applies each migrations/postgres/<set>/NNNN_*.sql file not
+// yet recorded in the current schema's schema_migrations, in order, in a
+// single transaction.
+func migratePostgres(ctx context.Context, d *sqlx.DB, set string) error {
 	tx, err := d.BeginTxx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, migrationLockID); err != nil {
+	// Serialize concurrent servers migrating the same schema.
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext('tt:' || current_schema()))`); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -78,7 +121,7 @@ func migratePostgres(ctx context.Context, d *sqlx.DB) error {
 		done[v] = true
 	}
 
-	names, err := fs.Glob(pgMigrations, "migrations/postgres/*.sql")
+	names, err := fs.Glob(pgMigrations, "migrations/postgres/"+set+"/*.sql")
 	if err != nil {
 		return err
 	}

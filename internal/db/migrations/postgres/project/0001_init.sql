@@ -1,5 +1,5 @@
 -- Mirrors the SQLite schema in db.go with native Postgres types.
--- Users, projects and auth tables arrive with the server (phase 3).
+-- Applied once per project schema; global tables live in migrations/global.
 
 CREATE TABLE tasks (
 	id          TEXT PRIMARY KEY,

@@ -97,6 +97,8 @@ type Claims struct {
 	Handle     string          `json:"handle"`
 	OnBehalfOf string          `json:"on_behalf_of,omitempty"`
 	Projects   map[string]Role `json:"projects"`
+	// Admin is set for server administrators, who can create projects.
+	Admin bool `json:"admin,omitempty"`
 
 	// Set only for tokens derived from an attenuated API key.
 	TaskScope []string `json:"task_scope,omitempty"`

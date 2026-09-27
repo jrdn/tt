@@ -509,7 +509,7 @@ func Next(db *sqlx.DB, handle string) (*Task, error) {
 			AND b.status NOT IN ('done', 'cancelled')
 		)
 		ORDER BY priority ASC, created_at ASC
-		LIMIT 1` + forUpdateSkipLocked(db)), handle)
+		LIMIT 1`+forUpdateSkipLocked(db)), handle)
 	if err != nil {
 		return nil, nil // no matching task
 	}

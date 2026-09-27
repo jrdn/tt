@@ -13,6 +13,12 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+func init() {
+	// Millisecond iat/exp so revocation cutoffs (revoked_before) aren't
+	// ambiguous within a second. Fractional NumericDates are valid JWT.
+	jwt.TimePrecision = time.Millisecond
+}
+
 // Issuer signs and verifies tt JWTs. Its Ed25519 key is derived from the
 // server's master secret, so nothing secret is stored in the database;
 // rotating means bumping the key version.

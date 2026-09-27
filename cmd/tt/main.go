@@ -4,25 +4,29 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jmoiron/sqlx"
+
 	"github.com/jrdn/tt/internal/cmd"
 	"github.com/jrdn/tt/internal/db"
 )
 
 func main() {
+	root := cmd.NewRoot(openLocalDB)
+	err := root.Execute()
+	cmd.CloseDB()
+	if err != nil {
+		os.Exit(1)
+	}
+}
+
+func openLocalDB() (*sqlx.DB, error) {
 	database, err := db.Open()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "tt: %v\n", err)
-		os.Exit(1)
+		return nil, err
 	}
-	defer database.Close()
-
 	if err := db.SetMeta(database, "app_version", version); err != nil {
-		fmt.Fprintf(os.Stderr, "tt: set meta: %v\n", err)
-		os.Exit(1)
+		database.Close()
+		return nil, fmt.Errorf("set meta: %w", err)
 	}
-
-	root := cmd.NewRoot(database)
-	if err := root.Execute(); err != nil {
-		os.Exit(1)
-	}
+	return database, nil
 }
