@@ -9,6 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/zalando/go-keyring"
 
 	"github.com/jrdn/tt/internal/config"
 )
@@ -79,10 +82,68 @@ func normalizeServer(s string) string {
 	return strings.TrimSuffix(strings.TrimSpace(s), "/")
 }
 
-// Credential is a stored login for one server.
+// Credential is a stored login for one server. With Storage "keychain" the
+// key lives in the OS keychain and Key is empty on disk.
 type Credential struct {
-	Key    string `json:"key"`
-	Handle string `json:"handle,omitempty"`
+	Key     string `json:"key,omitempty"`
+	Handle  string `json:"handle,omitempty"`
+	Storage string `json:"storage,omitempty"`
+}
+
+const (
+	keyringService  = "tt"
+	storageKeychain = "keychain"
+)
+
+// Keychain calls go through these so tests can simulate a stuck keychain.
+var (
+	keyringSet    = keyring.Set
+	keyringGet    = keyring.Get
+	keyringDelete = keyring.Delete
+)
+
+// keyringTimeout bounds keychain calls: a locked keychain can wait on a
+// dialog nobody sees (e.g. over SSH), which would otherwise hang tt.
+var keyringTimeout = 5 * time.Second
+
+// withTimeout runs a keychain call, giving up after keyringTimeout.
+func withTimeout[T any](f func() (T, error)) (T, error) {
+	type result struct {
+		v   T
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		v, err := f()
+		done <- result{v, err}
+	}()
+	select {
+	case r := <-done:
+		return r.v, r.err
+	case <-time.After(keyringTimeout):
+		var zero T
+		return zero, fmt.Errorf("the OS keychain did not respond within %s (is it locked?)", keyringTimeout)
+	}
+}
+
+func kcSet(server, key string) error {
+	_, err := withTimeout(func() (struct{}, error) { return struct{}{}, keyringSet(keyringService, server, key) })
+	return err
+}
+
+func kcGet(server string) (string, error) {
+	return withTimeout(func() (string, error) { return keyringGet(keyringService, server) })
+}
+
+func kcDelete(server string) error {
+	_, err := withTimeout(func() (struct{}, error) { return struct{}{}, keyringDelete(keyringService, server) })
+	return err
+}
+
+// useKeyring is false when TT_KEYRING=off, which forces the file (e.g. on
+// shared CI machines).
+func useKeyring() bool {
+	return os.Getenv("TT_KEYRING") != "off"
 }
 
 func credentialsPath() (string, error) {
@@ -112,19 +173,7 @@ func loadCredentials() (map[string]Credential, error) {
 	return creds, nil
 }
 
-// SaveCredential stores (or, with an empty key, removes) the key for a
-// server. The file is readable only by the user.
-func SaveCredential(server string, c Credential) error {
-	creds, err := loadCredentials()
-	if err != nil {
-		return err
-	}
-	server = normalizeServer(server)
-	if c.Key == "" {
-		delete(creds, server)
-	} else {
-		creds[server] = c
-	}
+func writeCredentials(creds map[string]Credential) error {
 	path, err := credentialsPath()
 	if err != nil {
 		return err
@@ -140,8 +189,46 @@ func SaveCredential(server string, c Credential) error {
 	return os.Rename(tmp, path)
 }
 
+// SaveCredential stores the key for a server in the OS keychain, falling
+// back to credentials.json (mode 0600) when no keychain is available. An
+// empty key removes the login. It returns where the key was stored.
+func SaveCredential(server string, c Credential) (string, error) {
+	creds, err := loadCredentials()
+	if err != nil {
+		return "", err
+	}
+	server = normalizeServer(server)
+	path, err := credentialsPath()
+	if err != nil {
+		return "", err
+	}
+	if c.Key == "" {
+		if useKeyring() || creds[server].Storage == storageKeychain {
+			if err := kcDelete(server); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+				fmt.Fprintf(os.Stderr, "tt: could not remove key from the OS keychain: %v\n", err)
+			}
+		}
+		delete(creds, server)
+		return "", writeCredentials(creds)
+	}
+	where := path
+	if useKeyring() {
+		if err := kcSet(server, c.Key); err == nil {
+			c = Credential{Handle: c.Handle, Storage: storageKeychain}
+			where = "the OS keychain"
+		} else {
+			fmt.Fprintf(os.Stderr, "tt: OS keychain unavailable (%v); storing the key in %s\n", err, path)
+		}
+	}
+	if c.Storage != storageKeychain {
+		c.Storage = ""
+	}
+	creds[server] = c
+	return where, writeCredentials(creds)
+}
+
 // KeyFor returns the API key to use for server: TT_API_KEY if set, else the
-// stored login.
+// stored login. Keys still stored in plain text are moved to the keychain.
 func KeyFor(server string) (string, error) {
 	if k := os.Getenv("TT_API_KEY"); k != "" {
 		return k, nil
@@ -150,8 +237,24 @@ func KeyFor(server string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if c, ok := creds[normalizeServer(server)]; ok {
-		return c.Key, nil
+	server = normalizeServer(server)
+	c, ok := creds[server]
+	if !ok {
+		return "", fmt.Errorf("not logged in to %s: run tt login", server)
 	}
-	return "", fmt.Errorf("not logged in to %s: run tt login", server)
+	if c.Storage == storageKeychain {
+		key, err := kcGet(server)
+		if err != nil {
+			return "", fmt.Errorf("read key for %s from the OS keychain: %w (unlock it, or run tt login; TT_KEYRING=off uses a file instead)", server, err)
+		}
+		return key, nil
+	}
+	if useKeyring() {
+		// Best effort: leaves the file untouched if the keychain refuses.
+		if err := kcSet(server, c.Key); err == nil {
+			creds[server] = Credential{Handle: c.Handle, Storage: storageKeychain}
+			writeCredentials(creds)
+		}
+	}
+	return c.Key, nil
 }

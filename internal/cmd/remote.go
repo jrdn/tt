@@ -65,7 +65,10 @@ func newLoginCmd() *cobra.Command {
 		Short: "Log in to a tt server",
 		Long: `Log in to a tt server. By default this starts a browser login: open the URL
 shown, check the code matches, and approve. The CLI then receives an API key
-(90 days by default) and stores it in ~/.config/tt/credentials.json.
+(90 days by default) and stores it in the OS keychain (macOS Keychain,
+Secret Service on Linux, Windows Credential Manager). Without a keychain, or
+with TT_KEYRING=off, it goes in credentials.json in the tt config directory
+(mode 0600).
 
 With --key, store an existing API key instead (e.g. one from tt server create-key).`,
 		Args: cobra.NoArgs,
@@ -84,10 +87,11 @@ With --key, store an existing API key instead (e.g. one from tt server create-ke
 			if err := client.New(srv, key).Do(ctx, "GET", "/api/v1/whoami", nil, &who); err != nil {
 				return fmt.Errorf("check key: %w", err)
 			}
-			if err := client.SaveCredential(srv, client.Credential{Key: key, Handle: who.Handle}); err != nil {
+			where, err := client.SaveCredential(srv, client.Credential{Key: key, Handle: who.Handle})
+			if err != nil {
 				return err
 			}
-			fmt.Printf("Logged in to %s as %s\n", srv, who.Handle)
+			fmt.Printf("Logged in to %s as %s (key stored in %s)\n", srv, who.Handle, where)
 			return nil
 		},
 	}
@@ -151,7 +155,7 @@ func newLogoutCmd() *cobra.Command {
 					}
 				}
 			}
-			if err := client.SaveCredential(srv, client.Credential{}); err != nil {
+			if _, err := client.SaveCredential(srv, client.Credential{}); err != nil {
 				return err
 			}
 			fmt.Printf("Logged out of %s\n", srv)
