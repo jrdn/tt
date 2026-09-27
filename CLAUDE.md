@@ -9,6 +9,7 @@ mise run test:integ   # integration tests (real SQLite)
 mise run test:all     # both
 mise run pg:up        # start throwaway Postgres in Docker (port 55432)
 mise run test:pg      # integration tests against Postgres
+mise run test:e2e     # end-to-end: real tt binary, local vs tt server parity (needs pg:up)
 mise run lint         # go vet
 mise run install      # install to $GOPATH/bin
 ```
