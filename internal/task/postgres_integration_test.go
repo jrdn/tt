@@ -107,3 +107,29 @@ func TestTimestamps_RoundTrip(t *testing.T) {
 		t.Errorf("closed_at = %v, want %q", got.ClosedAt, *updated.ClosedAt)
 	}
 }
+
+// Due dates read back as YYYY-MM-DD on both backends; on Postgres the
+// column is a real DATE.
+func TestDueDate_RoundTrip(t *testing.T) {
+	d := openTestDB(t)
+	due := "2026-12-01"
+	created, err := Create(d, "task", CreateOpts{DueDate: &due})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Get(d, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DueDate == nil || *got.DueDate != "2026-12-01" {
+		t.Errorf("due_date = %v, want 2026-12-01", got.DueDate)
+	}
+	if d.DriverName() == "pgx" {
+		var typ string
+		d.Get(&typ, `SELECT data_type FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = 'tasks' AND column_name = 'due_date'`)
+		if typ != "date" {
+			t.Errorf("due_date column type = %q, want date", typ)
+		}
+	}
+}

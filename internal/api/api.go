@@ -242,7 +242,7 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		if s == "" {
 			t.DueDate = nil
 		} else {
-			t.DueDate = &s
+			t.DueDate = task.DatePtr(&s)
 		}
 	}
 	if err := task.Validate(t); err != nil {

@@ -129,7 +129,7 @@ func addFromEditor(ctx context.Context) error {
 		Description: parsed.Description,
 		ParentID:    parsed.ParentID,
 		Assignee:    parsed.Assignee,
-		DueDate:     parsed.DueDate,
+		DueDate:     parsed.DueDate.StringPtr(),
 	}
 	t, err := store.Create(ctx, parsed.Title, opts)
 	if err != nil {

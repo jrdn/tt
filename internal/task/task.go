@@ -1,6 +1,7 @@
 package task
 
 import (
+	"database/sql/driver"
 	"fmt"
 	"sort"
 	"strings"
@@ -49,7 +50,7 @@ func Validate(t *Task) error {
 		return err
 	}
 	if t.DueDate != nil {
-		return validateDueDate(*t.DueDate)
+		return validateDueDate(string(*t.DueDate))
 	}
 	return nil
 }
@@ -82,7 +83,7 @@ type Task struct {
 	Priority    int     `db:"priority"     json:"priority"`
 	CreatedBy   *string `db:"created_by"   json:"created_by"`
 	Assignee    *string `db:"assignee"     json:"assignee"`
-	DueDate     *string `db:"due_date"     json:"due_date"`
+	DueDate     *Date   `db:"due_date"     json:"due_date"`
 	CreatedAt   string  `db:"created_at"   json:"created_at"`
 	UpdatedAt   string  `db:"updated_at"   json:"updated_at"`
 	ClosedAt    *string `db:"closed_at"    json:"closed_at"`
@@ -100,6 +101,44 @@ type Relation struct {
 	FromID string `db:"from_id" json:"from_id"`
 	ToID   string `db:"to_id"   json:"to_id"`
 	Type   string `db:"type"    json:"type"`
+}
+
+// Date is a calendar date, YYYY-MM-DD. It scans from SQLite TEXT and
+// Postgres DATE alike, and marshals to JSON as the same string.
+type Date string
+
+func (d *Date) Scan(v any) error {
+	switch v := v.(type) {
+	case string:
+		*d = Date(v)
+	case []byte:
+		*d = Date(v)
+	case time.Time:
+		*d = Date(v.Format("2006-01-02"))
+	default:
+		return fmt.Errorf("scan date: unexpected %T", v)
+	}
+	return nil
+}
+
+func (d Date) Value() (driver.Value, error) { return string(d), nil }
+
+// DatePtr converts an optional string to an optional Date.
+func DatePtr(s *string) *Date {
+	if s == nil {
+		return nil
+	}
+	d := Date(*s)
+	return &d
+}
+
+// StringPtr converts an optional Date to an optional string.
+func (d *Date) StringPtr() *string {
+	if d == nil {
+		return nil
+	}
+	s := string(*d)
+	return &s
 }
 
 func now() string {
@@ -163,7 +202,7 @@ func Create(db *sqlx.DB, title string, opts CreateOpts) (*Task, error) {
 		Priority:    opts.Priority,
 		CreatedBy:   opts.CreatedBy,
 		Assignee:    opts.Assignee,
-		DueDate:     opts.DueDate,
+		DueDate:     DatePtr(opts.DueDate),
 		CreatedAt:   ts,
 		UpdatedAt:   ts,
 	}
@@ -310,7 +349,7 @@ func Update(db *sqlx.DB, prefix string, opts UpdateOpts) (*Task, error) {
 		t.Assignee = opts.Assignee
 	}
 	if opts.DueDate != nil {
-		t.DueDate = opts.DueDate
+		t.DueDate = DatePtr(opts.DueDate)
 	}
 	if opts.ParentID != nil {
 		t.ParentID = opts.ParentID

@@ -157,7 +157,7 @@ func parseTaskFile(original *task.Task, content string) (*task.Task, error) {
 				t.DueDate = nil
 			} else {
 				s := v
-				t.DueDate = &s
+				t.DueDate = task.DatePtr(&s)
 			}
 		case "parent":
 			if v == "" {

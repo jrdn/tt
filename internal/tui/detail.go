@@ -102,7 +102,7 @@ func (m *detailModel) render() string {
 		field("Parent", *t.ParentID, styleID)
 	}
 	if t.DueDate != nil {
-		field("Due", *t.DueDate)
+		field("Due", string(*t.DueDate))
 	}
 	created := fmtRelativeTime(t.CreatedAt)
 	if t.CreatedBy != nil {

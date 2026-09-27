@@ -137,7 +137,7 @@ func (s *Store) Save(ctx context.Context, t *task.Task) error {
 		"description": str(t.Description),
 		"priority":    t.Priority,
 		"assignee":    str(t.Assignee),
-		"due_date":    str(t.DueDate),
+		"due_date":    str(t.DueDate.StringPtr()),
 		"parent_id":   str(t.ParentID),
 	}
 	return s.c.Do(ctx, "PATCH", s.base+"/tasks/"+url.PathEscape(t.ID), body, nil)

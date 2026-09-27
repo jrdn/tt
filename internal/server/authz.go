@@ -405,8 +405,8 @@ func diffTask(cur, next *task.Task) task.UpdateOpts {
 	if !eqPtr(next.Assignee, cur.Assignee) {
 		o.Assignee = orEmpty(next.Assignee)
 	}
-	if !eqPtr(next.DueDate, cur.DueDate) {
-		o.DueDate = orEmpty(next.DueDate)
+	if !eqPtr(next.DueDate.StringPtr(), cur.DueDate.StringPtr()) {
+		o.DueDate = orEmpty(next.DueDate.StringPtr())
 	}
 	if !eqPtr(next.ParentID, cur.ParentID) && next.ParentID != nil {
 		o.ParentID = next.ParentID
