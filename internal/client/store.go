@@ -1,9 +1,14 @@
 package client
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"io"
 	"net/url"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/jrdn/tt/internal/task"
 )
@@ -200,3 +205,59 @@ func (s *Store) FindByExternalRef(ctx context.Context, source, externalID string
 }
 
 func (s *Store) Close() error { return nil }
+
+var _ task.Subscriber = (*Store)(nil)
+
+// Subscribe streams the project's change events, reconnecting (with a
+// fresh token when needed) until ctx ends. After each reconnect it emits an
+// empty event, since changes during the gap weren't seen.
+func (s *Store) Subscribe(ctx context.Context) (<-chan task.Event, error) {
+	resp, err := s.c.Stream(ctx, s.base+"/events")
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan task.Event, 16)
+	go func() {
+		defer close(ch)
+		backoff := time.Second
+		for {
+			readEvents(resp.Body, ch)
+			resp.Body.Close()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(backoff):
+				}
+				if resp, err = s.c.Stream(ctx, s.base+"/events"); err == nil {
+					break
+				}
+				backoff = min(backoff*2, 30*time.Second)
+			}
+			backoff = time.Second
+			select {
+			case ch <- task.Event{}:
+			default:
+			}
+		}
+	}()
+	return ch, nil
+}
+
+// readEvents forwards "data:" payloads from an SSE stream until it ends.
+func readEvents(r io.Reader, ch chan<- task.Event) {
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		data, ok := strings.CutPrefix(sc.Text(), "data: ")
+		if !ok {
+			continue
+		}
+		var ev task.Event
+		if json.Unmarshal([]byte(data), &ev) == nil {
+			select {
+			case ch <- ev:
+			default:
+			}
+		}
+	}
+}

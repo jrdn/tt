@@ -25,6 +25,11 @@ type taskDetailMsg struct{ result showResult }
 type errMsg struct{ err error }
 type actionDoneMsg struct{ msg string }
 
+// Live refresh: a change happened elsewhere, and the reloaded data.
+type liveMsg struct{}
+type liveTasksMsg struct{ tasks []task.Task }
+type liveDetailMsg struct{ result showResult }
+
 // input modes
 type inputMode int
 
@@ -60,18 +65,72 @@ type Model struct {
 	statusIdx     int
 
 	showHelp bool
+
+	// live delivers change events when the store supports them.
+	live <-chan task.Event
 }
 
 func NewModel(store task.Store) Model {
-	return Model{
+	m := Model{
 		store:         store,
 		view:          viewList,
 		statusChoices: []string{"open", "backlog", "ready", "in_progress", "in_review", "done", "cancelled"},
 	}
+	if sub, ok := store.(task.Subscriber); ok {
+		// Best effort: without it the TUI still refreshes after its own actions.
+		m.live, _ = sub.Subscribe(context.Background())
+	}
+	return m
 }
 
 func (m Model) Init() tea.Cmd {
-	return m.loadTasks()
+	return tea.Batch(m.loadTasks(), m.waitForLive())
+}
+
+// waitForLive blocks until the next change event, folding any burst of
+// queued events into one refresh.
+func (m Model) waitForLive() tea.Cmd {
+	if m.live == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		if _, ok := <-m.live; !ok {
+			return nil
+		}
+		for {
+			select {
+			case _, ok := <-m.live:
+				if !ok {
+					return liveMsg{}
+				}
+			default:
+				return liveMsg{}
+			}
+		}
+	}
+}
+
+// applyLiveTasks swaps in fresh tasks while keeping the selection on the
+// same task, even if rows moved.
+func (m *Model) applyLiveTasks(tasks []task.Task) {
+	var keep string
+	if t := m.list.taskAtCursor(); t != nil {
+		keep = t.ID
+	}
+	m.tasks = tasks
+	filtered := m.filteredTasks()
+	m.list.rebuildWithTasks(filtered)
+	m.graph.rebuild(filtered)
+	for i, r := range m.list.rows {
+		if keep != "" && r.task != nil && r.task.ID == keep {
+			m.list.cursor = i
+			break
+		}
+	}
+	if m.list.cursor >= len(m.list.rows) {
+		m.list.cursor = max(0, len(m.list.rows)-1)
+	}
+	m.list.clampOffset()
 }
 
 func (m Model) loadTasks() tea.Cmd {
@@ -131,6 +190,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case actionDoneMsg:
 		m.statusMsg = msg.msg
 		return m, m.loadTasks()
+
+	case liveMsg:
+		cmds := []tea.Cmd{m.waitForLive(), m.reloadLive(m.loadTasks(), func(r tea.Msg) tea.Msg {
+			if t, ok := r.(tasksLoadedMsg); ok {
+				return liveTasksMsg{t.tasks}
+			}
+			return r
+		})}
+		// Don't swap the detail out from under an open prompt.
+		if m.view == viewDetail && m.detail.result != nil && m.inputMode == inputNone {
+			cmds = append(cmds, m.reloadLive(m.loadDetail(m.detail.result.Task.ID), func(r tea.Msg) tea.Msg {
+				if d, ok := r.(taskDetailMsg); ok {
+					return liveDetailMsg{d.result}
+				}
+				return r
+			}))
+		}
+		return m, tea.Batch(cmds...)
+
+	case liveTasksMsg:
+		m.applyLiveTasks(msg.tasks)
+		return m, nil
+
+	case liveDetailMsg:
+		if m.view == viewDetail && m.detail.result != nil && m.detail.result.Task.ID == msg.result.Task.ID {
+			y := m.detail.vp.YOffset
+			m.detail.setResult(&msg.result)
+			m.detail.vp.SetYOffset(y)
+		}
+		return m, nil
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -572,4 +661,10 @@ func (m Model) helpView() string {
 		"  ctrl+c      quit",
 	}
 	return strings.Join(lines, "\n")
+}
+
+// reloadLive runs a load command and maps its result to the live variant,
+// which updates data in place instead of resetting the view.
+func (m Model) reloadLive(load tea.Cmd, wrap func(tea.Msg) tea.Msg) tea.Cmd {
+	return func() tea.Msg { return wrap(load()) }
 }

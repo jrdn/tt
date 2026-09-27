@@ -481,9 +481,10 @@ func (d *Directory) CheckLive(ctx context.Context, c *auth.Claims) error {
 		RevokedBefore *time.Time `db:"revoked_before"`
 		OwnerDisabled *time.Time `db:"owner_disabled_at"`
 		KeyRevoked    *time.Time `db:"key_revoked_at"`
+		KeyExpires    *time.Time `db:"key_expires_at"`
 	}
 	err := d.db.GetContext(ctx, &row, `SELECT p.disabled_at, p.revoked_before,
-			o.disabled_at AS owner_disabled_at, k.revoked_at AS key_revoked_at
+			o.disabled_at AS owner_disabled_at, k.revoked_at AS key_revoked_at, k.expires_at AS key_expires_at
 		FROM principals p
 		LEFT JOIN principals o ON o.id = p.owner_id
 		LEFT JOIN api_keys k ON k.id = $2
@@ -499,6 +500,8 @@ func (d *Directory) CheckLive(ctx context.Context, c *auth.Claims) error {
 		return fmt.Errorf("%w: principal disabled", errUnauthenticated)
 	case row.KeyRevoked != nil:
 		return fmt.Errorf("%w: api key revoked", errUnauthenticated)
+	case row.KeyExpires != nil && !time.Now().Before(*row.KeyExpires):
+		return fmt.Errorf("%w: api key expired", errUnauthenticated)
 	case row.RevokedBefore != nil && c.IssuedAt != nil && !c.IssuedAt.Time.After(*row.RevokedBefore):
 		return fmt.Errorf("%w: token revoked", errUnauthenticated)
 	}

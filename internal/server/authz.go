@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/jrdn/tt/internal/api"
 	"github.com/jrdn/tt/internal/auth"
@@ -18,9 +19,56 @@ type authzStore struct {
 	inner   task.Store
 	project *Project
 	dir     *Directory
+	hub     *hub
 }
 
-var _ task.Store = (*authzStore)(nil)
+var (
+	_ task.Store      = (*authzStore)(nil)
+	_ task.Subscriber = (*authzStore)(nil)
+)
+
+// liveRecheck is how often an open event stream re-validates its token, so
+// revocation reaches long-lived streams.
+var liveRecheck = 30 * time.Second
+
+// Subscribe streams the project's change events to a reader. The stream
+// ends when the caller's token expires or is revoked.
+func (s *authzStore) Subscribe(ctx context.Context) (<-chan task.Event, error) {
+	c, err := s.allow(ctx, auth.ActTaskRead)
+	if err != nil {
+		return nil, err
+	}
+	in, cancel := s.hub.subscribe(s.project.ID)
+	out := make(chan task.Event, 16)
+	go func() {
+		defer close(out)
+		defer cancel()
+		recheck := time.NewTicker(liveRecheck)
+		defer recheck.Stop()
+		var expired <-chan time.Time
+		if c.ExpiresAt != nil {
+			expired = time.After(time.Until(c.ExpiresAt.Time))
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-expired:
+				return
+			case <-recheck.C:
+				if s.dir.CheckLive(ctx, c) != nil {
+					return
+				}
+			case ev := <-in:
+				select {
+				case out <- ev:
+				default:
+				}
+			}
+		}
+	}()
+	return out, nil
+}
 
 // allow checks that the caller holds every listed action in this project.
 func (s *authzStore) allow(ctx context.Context, actions ...auth.Action) (*auth.Claims, error) {

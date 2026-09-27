@@ -3,9 +3,11 @@
 package task
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/jrdn/tt/internal/db"
@@ -642,4 +644,41 @@ func TestCreate_InvalidDueDate(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for invalid due date on create, got nil")
 	}
+}
+
+// A write from another connection (e.g. an agent's tt process) shows up as
+// a live event on a local database.
+func TestSubscribe_SQLiteSeesOtherProcessWrites(t *testing.T) {
+	if os.Getenv("TT_TEST_POSTGRES_URL") != "" {
+		t.Skip("SQLite polling only")
+	}
+	path := filepath.Join(t.TempDir(), "live.db")
+	viewer, err := db.OpenPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer viewer.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events, err := NewSQLStore(viewer).Subscribe(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writer, err := db.OpenPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if _, err := Create(writer, "from another process", CreateOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-events:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no live event after a write from another connection")
+	}
+	cancel()
+	for range events {
+	} // channel closes once ctx ends
 }

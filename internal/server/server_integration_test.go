@@ -3,6 +3,7 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -136,10 +137,12 @@ func TestServer_EndToEnd(t *testing.T) {
 	agentKey := aRaw.must(201, "POST", "/api/v1/keys", map[string]any{"agent": "claude/opus4.7", "name": "laptop"})["key"].(string)
 	b.must(403, "POST", "/api/v1/keys", map[string]any{"agent": "claude/opus4.7"})
 	ag := anon.as(agentKey)
-	if who := ag.must(200, "GET", "/api/v1/whoami", nil); who["on_behalf_of"] != "alice" || who["admin"] != nil {
+	if who := ag.must(200, "GET", "/api/v1/whoami", nil); who["on_behalf_of"] != "alice" || who["admin"] != nil ||
+		who["projects"].(map[string]any)["tt"] != "member" {
 		t.Fatalf("agent whoami = %v", who)
 	}
 	ag.must(403, "POST", "/api/v1/keys", map[string]any{})
+	ag.must(403, "PUT", "/api/v1/projects/tt/members/bob", map[string]string{"role": "owner"})
 
 	// The agent's writes are attributed to it, whatever the client claims.
 	parent := ag.must(201, "POST", "/api/v1/projects/tt/tasks", map[string]string{"title": "parent"})
@@ -413,5 +416,79 @@ func TestServer_WebUISessionFlow(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 401 {
 		t.Errorf("API with cookie only = %d, want 401", resp.StatusCode)
+	}
+}
+
+// sse opens an event stream and returns received "data:" payloads plus a
+// channel closed when the stream ends.
+func sse(t *testing.T, url, token string) (<-chan string, <-chan struct{}, int) {
+	t.Helper()
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		return nil, nil, resp.StatusCode
+	}
+	data, done := make(chan string, 16), make(chan struct{})
+	go func() {
+		defer close(done)
+		defer resp.Body.Close()
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			if d, ok := strings.CutPrefix(sc.Text(), "data: "); ok {
+				data <- d
+			}
+		}
+	}()
+	t.Cleanup(func() { resp.Body.Close() })
+	return data, done, 200
+}
+
+func TestServer_LiveEvents(t *testing.T) {
+	liveRecheck = 100 * time.Millisecond
+	srv, hs := newTestServer(t)
+	ctx := context.Background()
+	dir := srv.Directory()
+	alice, _ := dir.CreateUser(ctx, "alice", nil, true)
+	bob, _ := dir.CreateUser(ctx, "bob", nil, false)
+	carol, _ := dir.CreateUser(ctx, "carol", nil, false)
+	tt, _ := dir.CreateProject(ctx, "tt", "tt", alice)
+	dir.CreateProject(ctx, "other", "other", alice)
+	dir.SetMember(ctx, tt, bob, auth.RoleViewer)
+	_, aliceKey, _ := dir.CreateKey(ctx, alice, alice, "", nil, "", time.Time{})
+	bobRec, bobKey, _ := dir.CreateKey(ctx, bob, bob, "", nil, "", time.Time{})
+	_, carolKey, _ := dir.CreateKey(ctx, carol, carol, "", nil, "", time.Time{})
+	a := (&client{t: t, base: hs.URL}).as(aliceKey)
+
+	if _, _, code := sse(t, hs.URL+"/api/v1/projects/tt/events", carolKey); code != 404 {
+		t.Errorf("non-member events = %d, want 404", code)
+	}
+	events, done, code := sse(t, hs.URL+"/api/v1/projects/tt/events", bobKey)
+	if code != 200 {
+		t.Fatalf("viewer events = %d", code)
+	}
+
+	a.must(201, "POST", "/api/v1/projects/other/tasks", map[string]string{"title": "elsewhere"})
+	id := a.must(201, "POST", "/api/v1/projects/tt/tasks", map[string]string{"title": "live"})["id"].(string)
+	select {
+	case d := <-events:
+		if !strings.Contains(d, id) || !strings.Contains(d, `"action":"create"`) {
+			t.Errorf("event = %s, want create of %s (other projects must not leak in)", d, id)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no live event after create")
+	}
+
+	// Revoking bob's key ends his open stream.
+	a.must(404, "DELETE", "/api/v1/keys/"+bobRec.ID, nil) // not alice's key
+	dir.RevokeKey(ctx, bobRec.ID)
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("stream stayed open after the key was revoked")
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"slices"
 	"strings"
@@ -67,6 +68,8 @@ type Server struct {
 	dir    *Directory
 	issuer *auth.Issuer
 	github *oauth2.Config
+	hub    *hub
+	stop   context.CancelFunc
 	now    func() time.Time
 }
 
@@ -91,12 +94,23 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	if cfg.GitHubClientID != "" {
 		s.github = githubOAuth(cfg)
 	}
+	// Live events run for the server's lifetime, not the caller's ctx.
+	var hubCtx context.Context
+	hubCtx, s.stop = context.WithCancel(context.Background())
+	s.hub = newHub()
+	go s.hub.run(hubCtx, cfg.DatabaseURL)
+	select {
+	case <-s.hub.ready:
+	case <-time.After(5 * time.Second):
+		log.Printf("live events: not listening yet; clients may miss updates until it connects")
+	}
 	return s, nil
 }
 
 func (s *Server) Directory() *Directory { return s.dir }
 
 func (s *Server) Close() {
+	s.stop()
 	s.dir.Close()
 	s.dir.db.Close()
 }
@@ -228,7 +242,7 @@ func (s *Server) resolveProjectStore(r *http.Request) (task.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &authzStore{inner: task.NewSQLStore(pdb), project: p, dir: s.dir}, nil
+	return &authzStore{inner: task.NewSQLStore(pdb), project: p, dir: s.dir, hub: s.hub}, nil
 }
 
 func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
@@ -409,6 +423,10 @@ func (s *Server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		target = a
 	}
 	var role auth.Role
+	if body.Role == "" && target.Kind == auth.KindAgent {
+		// Agents don't get owner rights (managing members) unless asked.
+		role = auth.RoleMember
+	}
 	if body.Role != "" {
 		var err error
 		if role, err = auth.ParseRole(body.Role); err != nil {

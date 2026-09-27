@@ -127,3 +127,35 @@ func (c *Client) send(ctx context.Context, method, path, bearer string, body, ou
 	}
 	return nil
 }
+
+// Stream opens a long-lived authenticated GET (server-sent events). The
+// caller closes the response body.
+func (c *Client) Stream(ctx context.Context, path string) (*http.Response, error) {
+	open := func(refresh bool) (*http.Response, error) {
+		tok, err := c.jwt(ctx, refresh)
+		if err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequestWithContext(ctx, "GET", c.Server+path, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+		req.Header.Set("Accept", "text/event-stream")
+		// No client timeout: the stream stays open until ctx ends.
+		return http.DefaultClient.Do(req)
+	}
+	resp, err := open(false)
+	if err == nil && resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		resp, err = open(true)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		return nil, &APIError{Status: resp.StatusCode, Message: fmt.Sprintf("GET %s: %s", path, resp.Status)}
+	}
+	return resp, nil
+}

@@ -38,6 +38,7 @@ func (s *Server) Register(mux *http.ServeMux, prefix string) {
 	mux.HandleFunc("POST "+prefix+"/tasks/{id}/relations", s.handleAddRelation)
 	mux.HandleFunc("DELETE "+prefix+"/tasks/{from}/relations/{rtype}/{to}", s.handleRemoveRelation)
 	mux.HandleFunc("POST "+prefix+"/next", s.handleNext)
+	mux.HandleFunc("GET "+prefix+"/events", s.handleEvents)
 	mux.HandleFunc("GET "+prefix+"/external-refs/{source}/{external_id}", s.handleFindExternalRef)
 	mux.HandleFunc("PUT "+prefix+"/external-refs/{source}/{external_id}", s.handleUpsertExternalRef)
 }
@@ -477,4 +478,48 @@ func (s *Server) handleUpsertExternalRef(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleEvents streams change events as server-sent events until the
+// client disconnects or the store ends the subscription.
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	st, ok := s.store(w, r)
+	if !ok {
+		return
+	}
+	sub, ok := st.(task.Subscriber)
+	flusher, canFlush := w.(http.Flusher)
+	if !ok || !canFlush {
+		writeErr(w, http.StatusNotImplemented, "live updates are not available")
+		return
+	}
+	events, err := sub.Subscribe(r.Context())
+	if err != nil {
+		writeStoreErr(w, 500, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no") // don't let nginx buffer the stream
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, ": connected\n\n")
+	flusher.Flush()
+
+	ping := time.NewTicker(25 * time.Second)
+	defer ping.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case ev, ok := <-events:
+			if !ok {
+				return
+			}
+			data, _ := json.Marshal(ev)
+			fmt.Fprintf(w, "event: change\ndata: %s\n\n", data)
+		case <-ping.C:
+			fmt.Fprint(w, ": ping\n\n")
+		}
+		flusher.Flush()
+	}
 }

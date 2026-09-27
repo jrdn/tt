@@ -872,6 +872,61 @@ function switchProject(slug) {
   location.search = '?project=' + encodeURIComponent(slug);
 }
 
+// ── Live refresh ───────────────────────────────────────────
+// Streams change events (tt server, or a local database edited by other
+// processes) and refreshes the list and open task. fetch is used instead of
+// EventSource so the bearer token can be sent.
+async function startLive() {
+  let delay = 1000;
+  for (;;) {
+    try {
+      const res = await apiFetch(API + '/events');
+      if (res.status === 501) return; // this backend has no live updates
+      if (!res.ok || !res.body) throw new Error('events: ' + res.status);
+      delay = 1000;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const {value, done} = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, {stream: true});
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+          const chunk = buf.slice(0, i);
+          buf = buf.slice(i + 2);
+          if (chunk.split('\n').some(l => l.startsWith('data:'))) scheduleLiveRefresh();
+        }
+      }
+    } catch (_) { /* reconnect below */ }
+    await new Promise(r => setTimeout(r, delay));
+    delay = Math.min(delay * 2, 30000);
+    scheduleLiveRefresh(); // changes during the gap weren't seen
+  }
+}
+
+let liveTimer = null;
+function scheduleLiveRefresh() {
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(liveRefresh, 300);
+}
+
+// liveRefresh waits while the user is typing or has a dialog open, so a
+// refresh never discards their input.
+function liveRefresh() {
+  const el = document.activeElement;
+  // The search box survives a refresh, so focus there doesn't hold it up.
+  const editing = el && el.id !== 'search-input' &&
+    (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable);
+  const modalOpen = document.querySelector('.modal-overlay.open');
+  if (editing || modalOpen) {
+    liveTimer = setTimeout(liveRefresh, 2000);
+    return;
+  }
+  refreshList();
+  if (selectedId) loadTask(selectedId);
+}
+
 const STATUS_COLORS = {
   backlog:     '#9ca3af',
   open:        '#3b82f6',
@@ -1630,6 +1685,7 @@ setupProject().then(ok => {
   if (!ok) return;
   renderFilters();
   loadTasks();
+  startLive();
 });
 </script>
 </body>

@@ -362,7 +362,7 @@ stdout. Give it to the agent as TT_API_KEY.`,
 	}
 	create.Flags().StringVar(&agent, "agent", "", "Agent handle (default: a key for yourself)")
 	create.Flags().StringSliceVar(&projects, "project", nil, "Limit to these projects")
-	create.Flags().StringVar(&role, "role", "", "Cap the role: viewer, member or owner")
+	create.Flags().StringVar(&role, "role", "", "Cap the role: viewer, member or owner (default member for agents)")
 	create.Flags().DurationVar(&expires, "expires", 0, "Lifetime (default: server default)")
 	create.Flags().StringVar(&name, "name", "", "Label to recognise the key by")
 

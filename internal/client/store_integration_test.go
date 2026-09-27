@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jmoiron/sqlx"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jmoiron/sqlx"
 
 	"github.com/jrdn/tt/internal/server"
 	"github.com/jrdn/tt/internal/task"
@@ -153,5 +153,27 @@ func TestStore_AgainstServer(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 	if _, err := s.List(ctx, task.ListOpts{}); err != nil {
 		t.Errorf("List after token revocation = %v", err)
+	}
+}
+
+func TestStore_Subscribe(t *testing.T) {
+	s, _ := newRemoteStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events, err := s.Subscribe(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := s.Create(ctx, "watched", task.CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ev := <-events:
+		if ev.TaskID != created.ID || ev.Action != "create" {
+			t.Errorf("event = %+v, want create of %s", ev, created.ID)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no live event")
 	}
 }
