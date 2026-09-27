@@ -18,6 +18,7 @@ func newKeyCmd() *cobra.Command {
 		Annotations: map[string]string{noLocalDB: "1"},
 	}
 	cmd.AddCommand(newKeyAttenuateCmd())
+	addServerKeyCmds(cmd)
 	return cmd
 }
 

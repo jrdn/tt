@@ -38,9 +38,12 @@ type Config struct {
 	KeyDefaultTTL time.Duration
 	KeyMaxTTL     time.Duration
 	SessionTTL    time.Duration
+	// LoginTTL is how long keys issued by `tt login` last.
+	LoginTTL time.Duration
 }
 
-// Defaults fills unset lifetimes: 1h JWTs, 1-year keys, 30-day sessions.
+// Defaults fills unset lifetimes: 1h JWTs, 1-year keys, 30-day sessions,
+// 90-day CLI logins.
 func (c *Config) Defaults() {
 	if c.JWTTTL == 0 {
 		c.JWTTTL = time.Hour
@@ -53,6 +56,9 @@ func (c *Config) Defaults() {
 	}
 	if c.SessionTTL == 0 {
 		c.SessionTTL = 30 * 24 * time.Hour
+	}
+	if c.LoginTTL == 0 {
+		c.LoginTTL = 90 * 24 * time.Hour
 	}
 }
 
@@ -105,6 +111,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /auth/github/login", s.handleGitHubLogin)
 	mux.HandleFunc("GET /auth/github/callback", s.handleGitHubCallback)
 	mux.HandleFunc("POST /auth/logout", s.handleLogout)
+	mux.HandleFunc("POST /auth/device/start", s.handleDeviceStart)
+	mux.HandleFunc("GET /auth/device", s.handleDevicePage)
+	mux.HandleFunc("POST /auth/device/approve", s.handleDeviceApprove)
+	mux.HandleFunc("POST /auth/device/token", s.handleDevicePoll)
+	mux.HandleFunc("GET /{$}", api.ServerIndex)
 
 	authed := http.NewServeMux()
 	authed.HandleFunc("GET /api/v1/whoami", s.handleWhoami)

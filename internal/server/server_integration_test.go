@@ -18,6 +18,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/jrdn/tt/internal/auth"
+	ttdb "github.com/jrdn/tt/internal/db"
 	"github.com/jrdn/tt/internal/task"
 )
 
@@ -265,5 +266,152 @@ func TestServer_ProjectsAreIsolated(t *testing.T) {
 	out := c.must(200, "GET", "/api/v1/projects", nil)
 	if n := len(out["projects"].([]any)); n != 2 {
 		t.Errorf("projects = %d, want 2", n)
+	}
+}
+
+// TestServer_DeviceLogin drives the tt login flow: start, approve in a
+// logged-in browser, poll for a key that then works.
+func TestServer_DeviceLogin(t *testing.T) {
+	srv, hs := newTestServer(t)
+	ctx := context.Background()
+	alice, _ := srv.Directory().CreateUser(ctx, "alice", nil, false)
+	session, _ := srv.Directory().CreateSession(ctx, alice.ID, time.Hour)
+	anon := &client{t: t, base: hs.URL}
+
+	start := anon.must(200, "POST", "/auth/device/start", map[string]string{"client_name": "laptop"})
+	device, userCode := start["device_code"].(string), start["user_code"].(string)
+	if code, out := anon.do("POST", "/auth/device/token", map[string]string{"device_code": device}); code != 400 ||
+		out["error"] != "authorization_pending" {
+		t.Fatalf("poll before approval = %d %v", code, out)
+	}
+
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	form := func(cookie bool, code string) int {
+		req, _ := http.NewRequest("POST", hs.URL+"/auth/device/approve", strings.NewReader("user_code="+code))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if cookie {
+			req.AddCookie(&http.Cookie{Name: sessionCookie, Value: session})
+		}
+		resp, err := noRedirect.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	// Without a session the page redirects to login and approval is refused.
+	resp, _ := noRedirect.Get(hs.URL + "/auth/device?user_code=" + userCode)
+	if resp.StatusCode != http.StatusFound || !strings.HasPrefix(resp.Header.Get("Location"), "/auth/github/login?next=") {
+		t.Errorf("device page without session = %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if code := form(false, userCode); code != 401 {
+		t.Errorf("approve without session = %d, want 401", code)
+	}
+	if code := form(true, "WRONG-CODE"); code != 400 {
+		t.Errorf("approve wrong code = %d, want 400", code)
+	}
+	if code := form(true, userCode); code != 200 {
+		t.Fatalf("approve = %d", code)
+	}
+
+	got := anon.must(200, "POST", "/auth/device/token", map[string]string{"device_code": device})
+	key := got["key"].(string)
+	if who := anon.as(key).must(200, "GET", "/api/v1/whoami", nil); who["handle"] != "alice" {
+		t.Errorf("whoami with login key = %v", who)
+	}
+	// The device code is single-use.
+	anon.must(400, "POST", "/auth/device/token", map[string]string{"device_code": device})
+}
+
+func TestServer_ImportSQLite(t *testing.T) {
+	srv, hs := newTestServer(t)
+	ctx := context.Background()
+	dir := srv.Directory()
+	alice, _ := dir.CreateUser(ctx, "alice", nil, true)
+	proj, err := dir.CreateProject(ctx, "tt", "tt", alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path := t.TempDir() + "/local.db"
+	local, err := ttdb.OpenPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := "someone"
+	child, _ := task.Create(local, "child", task.CreateOpts{CreatedBy: &by})
+	parent, _ := task.Create(local, "parent", task.CreateOpts{})
+	task.Update(local, child.ID, task.UpdateOpts{ParentID: &parent.ID})
+	task.AddComment(local, child.ID, "note", &by)
+	task.AddRelation(local, parent.ID, "blocks", child.ID)
+	local.Close()
+
+	for run, want := range []ImportStats{{2, 1, 1, 0}, {0, 0, 0, 0}} {
+		st, err := dir.ImportSQLite(ctx, proj, path, alice)
+		if err != nil {
+			t.Fatalf("import run %d: %v", run, err)
+		}
+		if st != want {
+			t.Errorf("import run %d = %+v, want %+v", run, st, want)
+		}
+	}
+
+	_, key, _ := dir.CreateKey(ctx, alice, alice, "", nil, "", time.Time{})
+	c := (&client{t: t, base: hs.URL}).as(key)
+	got := c.must(200, "GET", "/api/v1/projects/tt/tasks/"+child.ID, nil)
+	tk := got["task"].(map[string]any)
+	if tk["parent_id"] != parent.ID || tk["created_by"] != "someone" || tk["created_at"] != child.CreatedAt {
+		t.Errorf("imported task = %v", tk)
+	}
+	if len(got["comments"].([]any)) != 1 || len(got["relations"].([]any)) != 1 {
+		t.Errorf("imported comments/relations = %v / %v", got["comments"], got["relations"])
+	}
+}
+
+// TestServer_WebUISessionFlow follows what the web UI's JavaScript does:
+// load the page, trade the session cookie for a JWT, list projects.
+func TestServer_WebUISessionFlow(t *testing.T) {
+	srv, hs := newTestServer(t)
+	ctx := context.Background()
+	alice, _ := srv.Directory().CreateUser(ctx, "alice", nil, true)
+	srv.Directory().CreateProject(ctx, "tt", "tt", alice)
+	session, _ := srv.Directory().CreateSession(ctx, alice.ID, time.Hour)
+
+	resp, err := http.Get(hs.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(page), "const TT_SERVER = true;") {
+		t.Error("server UI is not configured for server mode")
+	}
+
+	anon := &client{t: t, base: hs.URL}
+	anon.must(401, "POST", "/api/v1/token", nil)
+	req, _ := http.NewRequest("POST", hs.URL+"/api/v1/token", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: session})
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tok struct {
+		Token string `json:"token"`
+	}
+	json.NewDecoder(resp.Body).Decode(&tok)
+	resp.Body.Close()
+	if tok.Token == "" {
+		t.Fatalf("no token from session, status %d", resp.StatusCode)
+	}
+	if out := anon.as(tok.Token).must(200, "GET", "/api/v1/projects", nil); len(out["projects"].([]any)) != 1 {
+		t.Errorf("projects = %v", out)
+	}
+	// The API itself never accepts the cookie, only the bearer token.
+	req, _ = http.NewRequest("GET", hs.URL+"/api/v1/projects", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: session})
+	resp, _ = http.DefaultClient.Do(req)
+	resp.Body.Close()
+	if resp.StatusCode != 401 {
+		t.Errorf("API with cookie only = %d, want 401", resp.StatusCode)
 	}
 }

@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/jrdn/tt/internal/client"
 )
 
 const sectionHeader = "## tt Task Manager"
@@ -63,12 +65,28 @@ Before ending a session on an in-progress task, always leave a comment summarizi
 <!-- end tt -->`
 
 func newInitCmd() *cobra.Command {
-	var filePath string
+	var filePath, server, project string
 
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Inject tt reference into AGENTS.md and/or CLAUDE.md",
+		Long: `Inject the tt reference section into AGENTS.md and/or CLAUDE.md.
+
+With --server and --project, also write .tt.json at the repo root so tt
+commands in this repo use that tt server project. Commit .tt.json so
+teammates share the setting; each then runs tt login.`,
+		Annotations: map[string]string{noLocalDB: "1"},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if (server == "") != (project == "") {
+				return fmt.Errorf("--server and --project must be given together")
+			}
+			if server != "" {
+				path, err := client.WriteProject(repoRootOrCwd(), server, project)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("tt: wrote %s (server %s, project %s)\n", path, server, project)
+			}
 			var targets []string
 			if filePath != "" {
 				targets = []string{filePath}
@@ -102,6 +120,8 @@ func newInitCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&filePath, "file", "", "Target file (overrides default behaviour)")
+	cmd.Flags().StringVar(&server, "server", "", "tt server URL to use for this repo")
+	cmd.Flags().StringVar(&project, "project", "", "Project slug on the tt server")
 	return cmd
 }
 
@@ -185,4 +205,12 @@ func gitRoot() string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// repoRootOrCwd is where .tt.json goes: the git root, else the current dir.
+func repoRootOrCwd() string {
+	if root := gitRoot(); root != "" {
+		return root
+	}
+	return "."
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +37,9 @@ func (s *Server) Register(mux *http.ServeMux, prefix string) {
 	mux.HandleFunc("POST "+prefix+"/tasks/{id}/comments", s.handleAddComment)
 	mux.HandleFunc("POST "+prefix+"/tasks/{id}/relations", s.handleAddRelation)
 	mux.HandleFunc("DELETE "+prefix+"/tasks/{from}/relations/{rtype}/{to}", s.handleRemoveRelation)
+	mux.HandleFunc("POST "+prefix+"/next", s.handleNext)
+	mux.HandleFunc("GET "+prefix+"/external-refs/{source}/{external_id}", s.handleFindExternalRef)
+	mux.HandleFunc("PUT "+prefix+"/external-refs/{source}/{external_id}", s.handleUpsertExternalRef)
 }
 
 // ErrForbidden is returned (wrapped) by stores that deny an action; the API
@@ -98,6 +102,13 @@ type webTaskDetail struct {
 	DescriptionHTML string             `json:"description_html"`
 }
 
+// ServerIndex serves the web UI in tt server mode: it logs in via the
+// session cookie and talks to /api/v1/projects/{project}.
+func ServerIndex(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, strings.Replace(webUI, "/*TT_CONFIG*/null", "true", 1))
+}
+
 // Index serves the single-page web UI.
 func Index(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -115,6 +126,7 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		Assignee: q.Get("assignee"),
 		All:      q.Get("all") == "1",
 		Ready:    q.Get("ready") == "1",
+		ParentID: q.Get("parent"),
 	}
 	tasks, err := st.List(r.Context(), opts)
 	if err != nil {
@@ -216,6 +228,14 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 			t.Assignee = &s
 		}
 	}
+	if v, ok := raw["parent_id"]; ok {
+		s := str(v)
+		if s == "" {
+			t.ParentID = nil
+		} else {
+			t.ParentID = &s
+		}
+	}
 	if v, ok := raw["due_date"]; ok {
 		s := str(v)
 		if s == "" {
@@ -223,6 +243,10 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		} else {
 			t.DueDate = &s
 		}
+	}
+	if err := task.Validate(t); err != nil {
+		writeErr(w, 400, err.Error())
+		return
 	}
 	t.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	if err := st.Save(r.Context(), t); err != nil {
@@ -271,6 +295,8 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		Assignee    *string `json:"assignee"`
 		Status      *string `json:"status"`
 		ParentID    *string `json:"parent_id"`
+		DueDate     *string `json:"due_date"`
+		CreatedBy   *string `json:"created_by"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeStoreErr(w, 400, err)
@@ -284,6 +310,8 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		Description: body.Description,
 		Assignee:    body.Assignee,
 		ParentID:    body.ParentID,
+		DueDate:     body.DueDate,
+		CreatedBy:   body.CreatedBy,
 	}
 	if body.Priority != nil {
 		opts.Priority = *body.Priority
@@ -381,7 +409,11 @@ func (s *Server) handleRecentTasks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tasks, err := st.Recent(r.Context(), 5)
+	limit := 5
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 100 {
+		limit = n
+	}
+	tasks, err := st.Recent(r.Context(), limit)
 	if err != nil {
 		writeStoreErr(w, 500, err)
 		return
@@ -390,4 +422,59 @@ func (s *Server) handleRecentTasks(w http.ResponseWriter, r *http.Request) {
 		tasks = []task.Task{}
 	}
 	writeJSON(w, map[string]any{"tasks": tasks})
+}
+
+// handleNext claims the next ready task for a handle; the body is the task
+// or null when none is ready.
+func (s *Server) handleNext(w http.ResponseWriter, r *http.Request) {
+	st, ok := s.store(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Handle string `json:"handle"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Handle == "" {
+		writeErr(w, 400, "handle is required")
+		return
+	}
+	t, err := st.Next(r.Context(), body.Handle)
+	if err != nil {
+		writeStoreErr(w, 500, err)
+		return
+	}
+	writeJSON(w, t)
+}
+
+func (s *Server) handleFindExternalRef(w http.ResponseWriter, r *http.Request) {
+	st, ok := s.store(w, r)
+	if !ok {
+		return
+	}
+	t, err := st.FindByExternalRef(r.Context(), r.PathValue("source"), r.PathValue("external_id"))
+	if err != nil {
+		writeStoreErr(w, 404, err)
+		return
+	}
+	writeJSON(w, t)
+}
+
+func (s *Server) handleUpsertExternalRef(w http.ResponseWriter, r *http.Request) {
+	st, ok := s.store(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		TaskID string  `json:"task_id"`
+		URL    *string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.TaskID == "" {
+		writeErr(w, 400, "task_id is required")
+		return
+	}
+	if err := st.UpsertExternalRef(r.Context(), body.TaskID, r.PathValue("source"), r.PathValue("external_id"), body.URL); err != nil {
+		writeStoreErr(w, 500, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

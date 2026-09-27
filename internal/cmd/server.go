@@ -33,7 +33,8 @@ Configuration comes from the environment:
   TT_ADMINS             comma-separated GitHub logins made server admins
   TT_JWT_TTL            JWT lifetime (default 1h)
   TT_KEY_DEFAULT_TTL    API key lifetime when none is given (default 8760h)
-  TT_KEY_MAX_TTL        longest API key lifetime allowed (default: the default)`,
+  TT_KEY_MAX_TTL        longest API key lifetime allowed (default: the default)
+  TT_LOGIN_TTL          lifetime of keys issued by tt login (default 2160h)`,
 		Annotations: map[string]string{noLocalDB: "1"},
 		Args:        cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -61,7 +62,7 @@ Configuration comes from the environment:
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", ":8080", "Address to listen on")
-	cmd.AddCommand(newServerAddUserCmd(), newServerCreateKeyCmd())
+	cmd.AddCommand(newServerAddUserCmd(), newServerCreateKeyCmd(), newServerImportCmd())
 	return cmd
 }
 
@@ -120,6 +121,48 @@ func newServerCreateKeyCmd() *cobra.Command {
 	return cmd
 }
 
+func newServerImportCmd() *cobra.Command {
+	var project, as string
+	cmd := &cobra.Command{
+		Use:   "import <sqlite-db>",
+		Short: "Copy a local tt database into a server project",
+		Long: `Copy a local tt SQLite database into a server project, keeping task IDs,
+timestamps and author handles. Rows already present are skipped, so the
+import can be re-run. The project must exist.`,
+		Example: `  tt server import --project tt --as jrdn ~/.config/tt/tt.db`,
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if project == "" || as == "" {
+				return fmt.Errorf("--project and --as are required")
+			}
+			srv, err := openServer(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer srv.Close()
+			dir := srv.Directory()
+			p, err := dir.ProjectBySlug(cmd.Context(), project)
+			if err != nil {
+				return err
+			}
+			actor, err := dir.PrincipalByHandle(cmd.Context(), as)
+			if err != nil {
+				return err
+			}
+			st, err := dir.ImportSQLite(cmd.Context(), p, args[0], actor)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("imported %d tasks, %d comments, %d relations, %d external refs into %s\n",
+				st.Tasks, st.Comments, st.Relations, st.ExternalRefs, project)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&project, "project", "", "Destination project slug")
+	cmd.Flags().StringVar(&as, "as", "", "Handle recorded as the importer in the audit log")
+	return cmd
+}
+
 // openServer builds a server from TT_* environment variables.
 func openServer(ctx context.Context) (*server.Server, error) {
 	cfg := server.Config{
@@ -144,6 +187,7 @@ func openServer(ctx context.Context) (*server.Server, error) {
 	}
 	for env, dst := range map[string]*time.Duration{
 		"TT_JWT_TTL": &cfg.JWTTTL, "TT_KEY_DEFAULT_TTL": &cfg.KeyDefaultTTL, "TT_KEY_MAX_TTL": &cfg.KeyMaxTTL,
+		"TT_LOGIN_TTL": &cfg.LoginTTL,
 	} {
 		if v := os.Getenv(env); v != "" {
 			if *dst, err = time.ParseDuration(v); err != nil {

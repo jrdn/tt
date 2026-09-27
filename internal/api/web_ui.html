@@ -742,6 +742,7 @@ main {
 <header>
   <button class="back-btn" id="back-btn" onclick="goBackToList()" style="display:none">← Back</button>
   <h1>tt</h1>
+  <select id="project-select" onchange="switchProject(this.value)" style="display:none"></select>
   <button class="btn btn-ghost" onclick="openNewTask()" style="font-size:12px;padding:5px 12px">+ New</button>
   <button class="recent-btn" id="recent-btn" onclick="toggleRecent()">Recent</button>
 </header>
@@ -817,6 +818,60 @@ main {
 </div>
 
 <script>
+// ── API access ─────────────────────────────────────────────
+// tt server replaces the placeholder below; local tt web leaves it null.
+const TT_SERVER = /*TT_CONFIG*/null;
+let API = '/api';
+let authToken = null;
+
+// apiFetch calls the task API. On tt server it adds a bearer JWT, fetched
+// with the session cookie and refreshed once on 401.
+async function apiFetch(url, opts = {}) {
+  if (!TT_SERVER) return fetch(url, opts);
+  if (!authToken) await refreshToken();
+  const withAuth = () => Object.assign({}, opts, {
+    headers: Object.assign({}, opts.headers, {Authorization: 'Bearer ' + authToken}),
+  });
+  let res = await fetch(url, withAuth());
+  if (res.status === 401) {
+    await refreshToken();
+    res = await fetch(url, withAuth());
+  }
+  return res;
+}
+
+async function refreshToken() {
+  const res = await fetch('/api/v1/token', {method: 'POST'});
+  if (res.status === 401) {
+    location.href = '/auth/github/login?next=' + encodeURIComponent(location.pathname + location.search);
+    throw new Error('login required');
+  }
+  authToken = (await res.json()).token;
+}
+
+// On tt server, pick the project from ?project= or the first one available.
+async function setupProject() {
+  if (!TT_SERVER) return true;
+  const res = await apiFetch('/api/v1/projects');
+  const projects = (await res.json()).projects || [];
+  if (projects.length === 0) {
+    document.body.innerHTML = '<p style="padding:2em">You are not a member of any tt project yet.</p>';
+    return false;
+  }
+  const want = new URLSearchParams(location.search).get('project');
+  const slug = projects.some(p => p.slug === want) ? want : projects[0].slug;
+  API = '/api/v1/projects/' + encodeURIComponent(slug);
+  const sel = document.getElementById('project-select');
+  sel.innerHTML = projects.map(p =>
+    `<option value="${esc(p.slug)}"${p.slug === slug ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
+  sel.style.display = projects.length > 1 ? '' : 'none';
+  return true;
+}
+
+function switchProject(slug) {
+  location.search = '?project=' + encodeURIComponent(slug);
+}
+
 const STATUS_COLORS = {
   backlog:     '#9ca3af',
   open:        '#3b82f6',
@@ -905,7 +960,7 @@ function clearSearch() {
 
 async function loadSearch(q) {
   try {
-    const res  = await fetch('/api/search?q=' + encodeURIComponent(q));
+    const res  = await apiFetch(API + '/search?q=' + encodeURIComponent(q));
     const data = await res.json();
     renderTaskList(data.tasks || []);
   } catch (_) {
@@ -934,12 +989,12 @@ function setFilter(v) {
 
 // ── Task list ──────────────────────────────────────────────
 async function loadTasks() {
-  let url = '/api/tasks';
+  let url = API + '/tasks';
   if (currentFilter === '__all__') url += '?all=1';
   else if (currentFilter !== '')   url += '?status=' + encodeURIComponent(currentFilter);
 
   try {
-    const res  = await fetch(url);
+    const res  = await apiFetch(url);
     const data = await res.json();
     renderTaskList(data.tasks || []);
   } catch (_) {
@@ -1002,7 +1057,7 @@ async function selectTask(id) {
 
 async function loadTask(id) {
   try {
-    const res = await fetch('/api/tasks/' + encodeURIComponent(id));
+    const res = await apiFetch(API + '/tasks/' + encodeURIComponent(id));
     if (!res.ok) throw new Error(await res.text());
     renderTaskDetail(await res.json());
   } catch (_) {
@@ -1160,7 +1215,7 @@ function renderTaskDetail(data) {
 async function updateStatus(id, select) {
   const status = select.value;
   select.style.background = STATUS_COLORS[status] || '#9ca3af';
-  await fetch('/api/tasks/' + encodeURIComponent(id), {
+  await apiFetch(API + '/tasks/' + encodeURIComponent(id), {
     method: 'PATCH',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({status}),
@@ -1170,7 +1225,7 @@ async function updateStatus(id, select) {
 
 async function updateAssignee(id, value) {
   const assignee = value.trim();
-  await fetch('/api/tasks/' + encodeURIComponent(id), {
+  await apiFetch(API + '/tasks/' + encodeURIComponent(id), {
     method: 'PATCH',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({assignee}),
@@ -1179,7 +1234,7 @@ async function updateAssignee(id, value) {
 }
 
 async function updatePriority(id, value) {
-  await fetch('/api/tasks/' + encodeURIComponent(id), {
+  await apiFetch(API + '/tasks/' + encodeURIComponent(id), {
     method: 'PATCH',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({priority: parseInt(value, 10)}),
@@ -1188,7 +1243,7 @@ async function updatePriority(id, value) {
 }
 
 async function updateDueDate(id, value) {
-  await fetch('/api/tasks/' + encodeURIComponent(id), {
+  await apiFetch(API + '/tasks/' + encodeURIComponent(id), {
     method: 'PATCH',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({due_date: value || ''}),
@@ -1219,7 +1274,7 @@ function startEditTitle(taskId) {
     done = true;
     const title = inp.value.trim();
     if (!title || title === original) { await loadTask(taskId); return; }
-    await fetch('/api/tasks/' + encodeURIComponent(taskId), {
+    await apiFetch(API + '/tasks/' + encodeURIComponent(taskId), {
       method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({title}),
@@ -1260,7 +1315,7 @@ function startEditDesc(taskId) {
 async function saveDesc(taskId) {
   const ta = document.getElementById('desc-textarea');
   const description = ta ? ta.value.trim() : '';
-  await fetch('/api/tasks/' + encodeURIComponent(taskId), {
+  await apiFetch(API + '/tasks/' + encodeURIComponent(taskId), {
     method: 'PATCH',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({description}),
@@ -1281,7 +1336,7 @@ function onRelSearch(value) {
 
 async function loadRelSearch(q) {
   try {
-    const res  = await fetch('/api/search?q=' + encodeURIComponent(q));
+    const res  = await apiFetch(API + '/search?q=' + encodeURIComponent(q));
     const data = await res.json();
     renderRelResults(data.tasks || []);
   } catch (_) {}
@@ -1360,7 +1415,7 @@ async function addRelation(taskId) {
   }
 
   try {
-    const res = await fetch('/api/tasks/' + encodeURIComponent(taskId) + '/relations', {
+    const res = await apiFetch(API + '/tasks/' + encodeURIComponent(taskId) + '/relations', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({type: relType, target_id: targetId}),
@@ -1379,8 +1434,8 @@ async function addRelation(taskId) {
 async function removeRelation(fromId, relType, toId, taskId) {
   if (!confirm('Remove this relation?')) return;
   try {
-    const url = `/api/tasks/${encodeURIComponent(fromId)}/relations/${encodeURIComponent(relType)}/${encodeURIComponent(toId)}`;
-    const res = await fetch(url, {method: 'DELETE'});
+    const url = `${API}/tasks/${encodeURIComponent(fromId)}/relations/${encodeURIComponent(relType)}/${encodeURIComponent(toId)}`;
+    const res = await apiFetch(url, {method: 'DELETE'});
     if (!res.ok && res.status !== 204) {
       const err = await res.json().catch(() => ({}));
       alert('Failed: ' + (err.error || 'unknown error'));
@@ -1405,7 +1460,7 @@ async function submitComment(id) {
   const btn = document.querySelector('#main .btn-primary');
   if (btn) btn.disabled = true;
 
-  await fetch('/api/tasks/' + encodeURIComponent(id) + '/comments', {
+  await apiFetch(API + '/tasks/' + encodeURIComponent(id) + '/comments', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({body, author: author || null}),
@@ -1445,7 +1500,7 @@ async function loadRecent() {
   const list = document.getElementById('recent-list');
   list.innerHTML = '<div style="padding:10px 14px;font-size:12px;color:#9ca3af">Loading…</div>';
   try {
-    const res  = await fetch('/api/tasks/recent');
+    const res  = await apiFetch(API + '/tasks/recent');
     const data = await res.json();
     list.innerHTML = (data.tasks || []).map(t => `
       <div class="recent-row" onclick="closeRecent(); selectTask('${esc(t.id)}')">
@@ -1534,7 +1589,7 @@ async function submitNewTask() {
     if (assignee)       payload.assignee    = assignee;
     if (newTaskParentId) payload.parent_id  = newTaskParentId;
 
-    const res = await fetch('/api/tasks', {
+    const res = await apiFetch(API + '/tasks', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload),
@@ -1571,8 +1626,11 @@ document.addEventListener('keydown', e => {
 });
 
 // ── Boot ───────────────────────────────────────────────────
-renderFilters();
-loadTasks();
+setupProject().then(ok => {
+  if (!ok) return;
+  renderFilters();
+  loadTasks();
+});
 </script>
 </body>
 </html>

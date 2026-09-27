@@ -80,7 +80,9 @@ func openPostgres(ctx context.Context, url, migrationSet string) (*sqlx.DB, erro
 		})
 		return nil
 	}))
-	d := sqlx.NewDb(sqlDB, "pgx")
+	// Unsafe: tables carry columns the Go structs don't map (e.g. seq), and
+	// queries use SELECT * for parity with SQLite.
+	d := sqlx.NewDb(sqlDB, "pgx").Unsafe()
 	if err := d.PingContext(ctx); err != nil {
 		d.Close()
 		return nil, fmt.Errorf("connect postgres: %w", err)

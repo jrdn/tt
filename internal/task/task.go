@@ -40,6 +40,20 @@ func validateDueDate(d string) error {
 	return nil
 }
 
+// Validate checks a whole task's fields, for callers that write with Save.
+func Validate(t *Task) error {
+	if err := validateStatus(t.Status); err != nil {
+		return err
+	}
+	if err := validatePriority(t.Priority); err != nil {
+		return err
+	}
+	if t.DueDate != nil {
+		return validateDueDate(*t.DueDate)
+	}
+	return nil
+}
+
 func validateParent(db *sqlx.DB, parentID string) error {
 	if _, err := Get(db, parentID); err != nil {
 		return fmt.Errorf("parent task %q not found", parentID)
@@ -97,6 +111,15 @@ func now() string {
 // doesn't, so both sides are lowered explicitly.
 func prefixPattern(prefix string) string {
 	return strings.ToLower(prefix) + "%"
+}
+
+// insertOrder names the column that orders rows by insertion, used to break
+// ties between equal one-second timestamps: rowid on SQLite, seq on Postgres.
+func insertOrder(db *sqlx.DB) string {
+	if db.DriverName() == "pgx" {
+		return "seq"
+	}
+	return "rowid"
 }
 
 // forUpdateSkipLocked returns a row-locking clause on Postgres so concurrent
@@ -214,7 +237,7 @@ func List(db *sqlx.DB, opts ListOpts) ([]Task, error) {
 		query += ` AND lower(parent_id) LIKE ?`
 		args = append(args, prefixPattern(opts.ParentID))
 	}
-	query += ` ORDER BY priority ASC, created_at ASC`
+	query += ` ORDER BY priority ASC, created_at ASC, ` + insertOrder(db)
 
 	var tasks []Task
 	err := db.Select(&tasks, db.Rebind(query), args...)
@@ -224,7 +247,7 @@ func List(db *sqlx.DB, opts ListOpts) ([]Task, error) {
 // Recent returns the most recently updated tasks, newest first.
 func Recent(db *sqlx.DB, limit int) ([]Task, error) {
 	var tasks []Task
-	err := db.Select(&tasks, db.Rebind(`SELECT * FROM tasks ORDER BY updated_at DESC LIMIT ?`), limit)
+	err := db.Select(&tasks, db.Rebind(`SELECT * FROM tasks ORDER BY updated_at DESC, `+insertOrder(db)+` DESC LIMIT ?`), limit)
 	return tasks, err
 }
 
@@ -341,7 +364,7 @@ func fuzzyScore(pattern, text string) (bool, int) {
 
 func Search(db *sqlx.DB, query string) ([]Task, error) {
 	var all []Task
-	if err := db.Select(&all, `SELECT * FROM tasks`); err != nil {
+	if err := db.Select(&all, `SELECT * FROM tasks ORDER BY `+insertOrder(db)); err != nil {
 		return nil, err
 	}
 
@@ -406,7 +429,7 @@ func Search(db *sqlx.DB, query string) ([]Task, error) {
 		}
 	}
 
-	sort.Slice(results, func(i, j int) bool {
+	sort.SliceStable(results, func(i, j int) bool {
 		if results[i].score != results[j].score {
 			return results[i].score > results[j].score
 		}
@@ -445,7 +468,7 @@ func AddComment(db *sqlx.DB, taskPrefix, body string, author *string) (*Comment,
 
 func GetComments(db *sqlx.DB, taskID string) ([]Comment, error) {
 	var comments []Comment
-	err := db.Select(&comments, db.Rebind(`SELECT * FROM comments WHERE task_id=? ORDER BY created_at ASC`), taskID)
+	err := db.Select(&comments, db.Rebind(`SELECT * FROM comments WHERE task_id=? ORDER BY created_at ASC, `+insertOrder(db)), taskID)
 	return comments, err
 }
 
@@ -508,7 +531,7 @@ func Next(db *sqlx.DB, handle string) (*Task, error) {
 			WHERE r.to_id = tasks.id AND r.type = 'blocks'
 			AND b.status NOT IN ('done', 'cancelled')
 		)
-		ORDER BY priority ASC, created_at ASC
+		ORDER BY priority ASC, created_at ASC, tasks.`+insertOrder(db)+`
 		LIMIT 1`+forUpdateSkipLocked(db)), handle)
 	if err != nil {
 		return nil, nil // no matching task

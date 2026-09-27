@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"html"
 	"net/http"
 	"slices"
 	"strings"
@@ -15,7 +14,19 @@ import (
 	"golang.org/x/oauth2/github"
 )
 
-const oauthStateCookie = "tt_oauth_state"
+const (
+	oauthStateCookie = "tt_oauth_state"
+	oauthNextCookie  = "tt_oauth_next"
+)
+
+// safeNext accepts only same-site paths, so login can't be used as an open
+// redirect.
+func safeNext(next string) string {
+	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.HasPrefix(next, "/\\") {
+		return "/"
+	}
+	return next
+}
 
 func githubOAuth(cfg Config) *oauth2.Config {
 	return &oauth2.Config{
@@ -41,6 +52,10 @@ func (s *Server) handleGitHubLogin(w http.ResponseWriter, r *http.Request) {
 	state := base64.RawURLEncoding.EncodeToString(b)
 	http.SetCookie(w, &http.Cookie{
 		Name: oauthStateCookie, Value: state, Path: "/auth/github",
+		MaxAge: 600, HttpOnly: true, Secure: s.secureCookies(), SameSite: http.SameSiteLaxMode,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name: oauthNextCookie, Value: safeNext(r.URL.Query().Get("next")), Path: "/auth/github",
 		MaxAge: 600, HttpOnly: true, Secure: s.secureCookies(), SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, s.github.AuthCodeURL(state), http.StatusFound)
@@ -93,9 +108,12 @@ func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		Name: sessionCookie, Value: session, Path: "/",
 		MaxAge: int(s.cfg.SessionTTL.Seconds()), HttpOnly: true, Secure: s.secureCookies(), SameSite: http.SameSiteLaxMode,
 	})
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, "<!doctype html><title>tt</title><p>Logged in to tt as <b>%s</b>. You can close this tab.</p>",
-		html.EscapeString(p.Handle))
+	next := "/"
+	if ck, err := r.Cookie(oauthNextCookie); err == nil {
+		next = safeNext(ck.Value)
+	}
+	http.SetCookie(w, &http.Cookie{Name: oauthNextCookie, Path: "/auth/github", MaxAge: -1})
+	http.Redirect(w, r, next, http.StatusFound)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

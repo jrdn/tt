@@ -19,8 +19,9 @@ import (
 
 func newSyncCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "sync",
-		Short: "Sync database with a remote backend",
+		Use:         "sync",
+		Short:       "Sync database with a remote backend",
+		Annotations: map[string]string{localOnly: "1"},
 		Long: `Push or pull the tt database to/from a configured sync backend.
 
 Supported backends:

@@ -23,16 +23,22 @@ go test -tags integration ./...
 
 ## Architecture Overview
 
-Local-first task manager. No HTTP server or daemon — the CLI reads/writes SQLite directly.
+Local-first task manager. By default the CLI reads/writes SQLite directly. Optionally, a repo can point at a multiuser `tt server` (Postgres) instead.
 
 ```
 cmd/tt/main.go          entry point
-internal/db/            SQLite open/migrate, per-repo DB selection
-internal/task/          task model + CRUD (tasks, comments, relations)
+internal/db/            SQLite open/migrate, per-repo DB selection; Postgres open + embedded migrations
+internal/task/          task model + CRUD, and the task.Store interface (SQLStore serves SQLite and Postgres)
 internal/cmd/           cobra commands
+internal/api/           task JSON API + web UI, shared by `tt web` and `tt server`
+internal/auth/          JWT claims/issuer, macaroon API keys (offline attenuation)
+internal/server/        `tt server`: identities, projects, authz wrapper around task.Store, GitHub + device login
+internal/client/        server mode for the CLI: .tt.json discovery, credentials, HTTP task.Store
 ```
 
 Storage: `~/.config/tt/<repo-name>.db` when inside a git repo, `~/.config/tt/tasks.db` otherwise. Override with `TASKS_DB=/path/to/file.db`.
+
+Server mode: a checked-in `.tt.json` (`{"server": ..., "project": ...}`, written by `tt init --server <url> --project <slug>`) makes every command use that server project; `TT_SERVER`/`TT_PROJECT` override it. Credentials come from `tt login` (`~/.config/tt/credentials.json`) or `TT_API_KEY`. SQL in `internal/task` must stay portable across SQLite and Postgres (use `db.Rebind`, see `insertOrder` / `forUpdateSkipLocked` for dialect differences).
 
 ## Conventions & Patterns
 
