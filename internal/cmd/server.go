@@ -62,18 +62,23 @@ Configuration comes from the environment:
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", ":8080", "Address to listen on")
-	cmd.AddCommand(newServerAddUserCmd(), newServerCreateKeyCmd(), newServerImportCmd())
+	cmd.AddCommand(newServerAddUserCmd(), newServerLinkGitHubCmd(), newServerCreateKeyCmd(), newServerImportCmd())
 	return cmd
 }
 
 func newServerAddUserCmd() *cobra.Command {
 	var admin bool
+	var github string
 	cmd := &cobra.Command{
 		Use:   "add-user <handle>",
 		Short: "Create a user directly in the database (bootstrap and local dev)",
 		Long: `Create a user without GitHub, for bootstrapping a server or local development.
-Users who later log in with GitHub get a separate account keyed by their GitHub ID.`,
-		Args: cobra.ExactArgs(1),
+
+With --github, the first GitHub sign-in as that login uses this user (its keys,
+projects and history) instead of creating a new account. Without it, the user
+is never matched to a GitHub account; see also tt server link-github.`,
+		Example: `  tt server add-user jrdn --admin --github jrdn`,
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			srv, err := openServer(cmd.Context())
 			if err != nil {
@@ -85,11 +90,41 @@ Users who later log in with GitHub get a separate account keyed by their GitHub 
 				return err
 			}
 			fmt.Printf("created user %s (%s)\n", p.Handle, p.ID)
+			if github != "" {
+				if err := srv.Directory().LinkGitHub(cmd.Context(), p.Handle, github); err != nil {
+					return err
+				}
+				fmt.Printf("first GitHub sign-in as %s will use this user\n", github)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&admin, "admin", false, "Make the user a server admin")
+	cmd.Flags().StringVar(&github, "github", "", "GitHub login that should sign in as this user")
 	return cmd
+}
+
+func newServerLinkGitHubCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "link-github <handle> <github-login>",
+		Short: "Let a GitHub account sign in as an existing user",
+		Long: `Arrange for the first GitHub sign-in as <github-login> to use the existing user
+<handle>, keeping its keys, projects and history. Only for users who haven't
+signed in with GitHub yet.`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			srv, err := openServer(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer srv.Close()
+			if err := srv.Directory().LinkGitHub(cmd.Context(), args[0], args[1]); err != nil {
+				return err
+			}
+			fmt.Printf("first GitHub sign-in as %s will use user %s\n", args[1], args[0])
+			return nil
+		},
+	}
 }
 
 func newServerCreateKeyCmd() *cobra.Command {

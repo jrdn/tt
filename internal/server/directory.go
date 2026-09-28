@@ -129,8 +129,12 @@ func (d *Directory) PrincipalByHandle(ctx context.Context, handle string) (*Prin
 	return &p, err
 }
 
+// errHandleTaken means a GitHub sign-in's login is already used as the handle
+// of an account not linked to that GitHub user.
+var errHandleTaken = errors.New("handle taken")
+
 // CreateUser adds a human principal. githubID is nil for users created by
-// the operator CLI.
+// the operator CLI; LinkGitHub can later attach their GitHub account.
 func (d *Directory) CreateUser(ctx context.Context, handle string, githubID *int64, admin bool) (*Principal, error) {
 	tx, err := d.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -143,12 +147,49 @@ func (d *Directory) CreateUser(ctx context.Context, handle string, githubID *int
 		p.ID, handle); err != nil {
 		return nil, fmt.Errorf("create user %q: %w", handle, err)
 	}
+	// Only GitHub-created users record a login here: for users without a
+	// GitHub ID, github_login is an explicit link request (see LinkGitHub).
+	var login *string
+	if githubID != nil {
+		login = &handle
+	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO users (principal_id, github_id, github_login, is_admin) VALUES ($1, $2, $3, $4)`,
-		p.ID, githubID, handle, admin); err != nil {
+		p.ID, githubID, login, admin); err != nil {
 		return nil, err
 	}
 	return p, tx.Commit()
+}
+
+// LinkGitHub arranges for the first GitHub sign-in as login to use the
+// existing user with this handle, keeping its keys, projects and history.
+// GitHub logins are matched case-insensitively.
+func (d *Directory) LinkGitHub(ctx context.Context, handle, login string) error {
+	p, err := d.PrincipalByHandle(ctx, handle)
+	if err != nil {
+		return err
+	}
+	if p.Kind != auth.KindUser {
+		return fmt.Errorf("%s is an %s, not a user", handle, p.Kind)
+	}
+	var taken string
+	err = d.db.GetContext(ctx, &taken, `SELECT p.handle FROM users u JOIN principals p ON p.id = u.principal_id
+		WHERE lower(u.github_login) = lower($1) AND u.principal_id <> $2`, login, p.ID)
+	if err == nil {
+		return fmt.Errorf("GitHub login %s is already linked to %s", login, taken)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	res, err := d.db.ExecContext(ctx, `UPDATE users SET github_login = $2 WHERE principal_id = $1 AND github_id IS NULL`,
+		p.ID, login)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%s has already signed in with GitHub; its link can't be changed", handle)
+	}
+	return nil
 }
 
 // UpsertGitHubUser finds or creates the user for a GitHub account. admin
@@ -163,6 +204,21 @@ func (d *Directory) UpsertGitHubUser(ctx context.Context, githubID int64, login,
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
+	}
+	// First sign-in for a user the operator linked to this login.
+	err = d.db.GetContext(ctx, &id, `UPDATE users
+		SET github_id = $1, github_login = $2, email = NULLIF($3, ''), name = NULLIF($4, ''), is_admin = is_admin OR $5
+		WHERE github_id IS NULL AND lower(github_login) = lower($2) RETURNING principal_id`,
+		githubID, login, email, name, admin)
+	if err == nil {
+		return d.PrincipalByID(ctx, id)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if _, err := d.PrincipalByHandle(ctx, login); err == nil {
+		return nil, fmt.Errorf("%w: the tt handle %q already belongs to another account. If it's yours, "+
+			"the server operator can link it with: tt server link-github %s %s", errHandleTaken, login, login, login)
 	}
 	p, err := d.CreateUser(ctx, login, &githubID, admin)
 	if err != nil {

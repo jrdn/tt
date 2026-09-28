@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -490,5 +491,74 @@ func TestServer_LiveEvents(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("stream stayed open after the key was revoked")
+	}
+}
+
+// Operator-created users attach to a GitHub account only when explicitly
+// linked; otherwise a colliding GitHub login gets a clear conflict.
+func TestServer_GitHubLinking(t *testing.T) {
+	srv, _ := newTestServer(t)
+	ctx := context.Background()
+	dir := srv.Directory()
+
+	// Linked (case-insensitively): the first sign-in reuses the user, so
+	// keys minted before the sign-in keep working.
+	jrdn, _ := dir.CreateUser(ctx, "jrdn", nil, false)
+	if err := dir.LinkGitHub(ctx, "jrdn", "JRDN"); err != nil {
+		t.Fatal(err)
+	}
+	_, key, _ := dir.CreateKey(ctx, jrdn, jrdn, "", nil, "", time.Time{})
+	p, err := dir.UpsertGitHubUser(ctx, 42, "jrdn", "j@example.com", "J", true)
+	if err != nil || p.ID != jrdn.ID {
+		t.Fatalf("sign-in with linked login = %v, %v; want user %s", p, err, jrdn.ID)
+	}
+	if admin, _ := dir.IsAdmin(ctx, jrdn.ID); !admin {
+		t.Error("TT_ADMINS promotion lost on link")
+	}
+	if _, _, err := dir.ClaimsForKey(ctx, key, time.Now()); err != nil {
+		t.Errorf("key from before the link stopped working: %v", err)
+	}
+	// Later sign-ins find the user by GitHub ID, even after a rename.
+	if p, err := dir.UpsertGitHubUser(ctx, 42, "jrdn-renamed", "", "", false); err != nil || p.ID != jrdn.ID {
+		t.Errorf("sign-in after GitHub rename = %v, %v", p, err)
+	}
+	if err := dir.LinkGitHub(ctx, "jrdn", "someone"); err == nil {
+		t.Error("relinking a user who already signed in with GitHub should fail")
+	}
+
+	// Not linked: a GitHub user with the same login is refused, not merged.
+	dir.CreateUser(ctx, "bob", nil, false)
+	var before, after int
+	dir.db.Get(&before, `SELECT count(*) FROM users`)
+	_, err = dir.UpsertGitHubUser(ctx, 43, "bob", "", "", false)
+	if !errors.Is(err, errHandleTaken) || !strings.Contains(err.Error(), "tt server link-github bob bob") {
+		t.Errorf("colliding sign-in error = %v", err)
+	}
+	dir.db.Get(&after, `SELECT count(*) FROM users`)
+	if after != before {
+		t.Errorf("colliding sign-in created a user (%d -> %d)", before, after)
+	}
+	// Linking bob fixes it.
+	if err := dir.LinkGitHub(ctx, "bob", "bob"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dir.UpsertGitHubUser(ctx, 43, "bob", "", "", false); err != nil {
+		t.Errorf("sign-in after link = %v", err)
+	}
+
+	// New logins still get new accounts.
+	if p, err := dir.UpsertGitHubUser(ctx, 44, "carol", "", "", false); err != nil || p.Handle != "carol" {
+		t.Errorf("new GitHub user = %v, %v", p, err)
+	}
+
+	// Link validation.
+	dir.CreateUser(ctx, "dave", nil, false)
+	if err := dir.LinkGitHub(ctx, "dave", "Carol"); err == nil {
+		t.Error("linked a login that already belongs to another user")
+	}
+	owner, _ := dir.PrincipalByHandle(ctx, "carol")
+	dir.CreateAgent(ctx, owner, "bot/1")
+	if err := dir.LinkGitHub(ctx, "bot/1", "whatever"); err == nil {
+		t.Error("linked GitHub to an agent")
 	}
 }

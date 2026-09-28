@@ -498,6 +498,8 @@ func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, errUnauthenticated):
 		code = http.StatusUnauthorized
+	case errors.Is(err, errHandleTaken):
+		code = http.StatusConflict
 	case errors.Is(err, api.ErrForbidden):
 		code = http.StatusForbidden
 	case errors.Is(err, api.ErrNotFound):

@@ -197,9 +197,11 @@ Create a GitHub OAuth app with the callback URL `$TT_BASE_URL/auth/github/callba
 Without GitHub (local development, or bootstrapping), create users and keys directly:
 
 ```bash
-tt server add-user jrdn --admin
-tt server create-key jrdn        # then: tt login --key <key>
+tt server add-user jrdn --admin --github jrdn   # --github: link to that GitHub login
+tt server create-key jrdn                       # then: tt login --key <key>
 ```
+
+A user created this way is used by a later GitHub sign-in only if it was linked with `--github`, or afterwards with `tt server link-github <handle> <github-login>`. Otherwise a GitHub sign-in whose login matches an existing handle is refused with instructions, rather than merged into that account.
 
 To move an existing local database onto the server, keeping IDs, timestamps and authors (safe to re-run):
 
