@@ -51,5 +51,8 @@ description = "Install tt to ~/.local/bin and GOBIN"
 run = [
   "go build -o tt ./cmd/tt",
   "mkdir -p $HOME/.local/bin",
-  "cp -f tt $HOME/.local/bin/tt",
+  # Replace rather than overwrite: on macOS, overwriting a binary in place
+  # leaves a stale code signature and the next run is killed (exit 137).
+  "rm -f $HOME/.local/bin/tt",
+  "cp tt $HOME/.local/bin/tt",
 ]
