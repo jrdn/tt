@@ -156,6 +156,8 @@ tt export > backup.json                 # every task with comments and relations
 tt logout                               # revokes the key and forgets it
 ```
 
+`tt login` also makes that server your default, so account commands (`whoami`, `project`, `key`, `agent`, `logout`) work outside a repo without `--server`; `tt logout` clears it. They look for a server in this order: `--server`, `TT_SERVER`, the repo's `.tt.json`, then the default. Task commands (`ls`, `add`, …) only use a server when the repo has a `.tt.json`, or `TT_SERVER` and `TT_PROJECT` are both set.
+
 `TT_SERVER`, `TT_PROJECT` and `TT_API_KEY` override `.tt.json` and the stored login. `tt sync` only applies to local databases.
 
 The TUI and web UI refresh live when anyone changes a task. This also works locally: `tt tui` and `tt web` pick up writes from other processes, such as agents.

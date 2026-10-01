@@ -69,6 +69,9 @@ type DBConfig struct {
 // TTConfig is the top-level configuration structure.
 type TTConfig struct {
 	Databases map[string]*DBConfig `json:"databases,omitempty"`
+	// DefaultServer is the tt server account commands use when neither
+	// --server, TT_SERVER nor a repo's .tt.json names one. Set by tt login.
+	DefaultServer string `json:"default_server,omitempty"`
 }
 
 // Load reads the config file from disk. Returns an empty config if the file

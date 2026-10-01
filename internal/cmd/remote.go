@@ -26,8 +26,8 @@ import (
 	"github.com/jrdn/tt/internal/task"
 )
 
-// serverFor picks the server for account commands: --server, else the
-// directory's .tt.json / TT_SERVER.
+// serverFor picks the server for account commands: --server, TT_SERVER,
+// the repo's .tt.json, then the default set by the last tt login.
 func serverFor(flag string) (string, error) {
 	if flag != "" {
 		return flag, nil
@@ -39,10 +39,18 @@ func serverFor(flag string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !ok {
-		return "", fmt.Errorf("no tt server configured here: pass --server or run tt init --server <url> --project <slug>")
+	if ok {
+		return cfg.Server, nil
 	}
-	return cfg.Server, nil
+	def, err := client.DefaultServer()
+	if err != nil {
+		return "", err
+	}
+	if def == "" {
+		return "", fmt.Errorf("no tt server configured: run tt login --server <url> (it becomes your default), " +
+			"or tt init --server <url> --project <slug> in a repo")
+	}
+	return def, nil
 }
 
 // serverClient returns an authenticated client for account commands.
@@ -107,7 +115,10 @@ With --key, store an existing API key instead (e.g. one from tt server create-ke
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Logged in to %s as %s (key stored in %s)\n", srv, who.Handle, where)
+			if err := client.SetDefaultServer(srv); err != nil {
+				return err
+			}
+			fmt.Printf("Logged in to %s as %s (key stored in %s). It's now your default server.\n", srv, who.Handle, where)
 			return nil
 		},
 	}
@@ -254,6 +265,11 @@ func newLogoutCmd() *cobra.Command {
 			}
 			if _, err := client.SaveCredential(srv, client.Credential{}); err != nil {
 				return err
+			}
+			if def, _ := client.DefaultServer(); def == strings.TrimSuffix(srv, "/") {
+				if err := client.SetDefaultServer(""); err != nil {
+					return err
+				}
 			}
 			fmt.Printf("Logged out of %s\n", srv)
 			return nil

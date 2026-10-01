@@ -621,3 +621,26 @@ func TestLogin(t *testing.T) {
 		}
 	})
 }
+
+// After one `tt login --server`, account commands outside a repo use that
+// server by default; logging out clears it.
+func TestDefaultServer(t *testing.T) {
+	s := startServer(t)
+	e := newEnv(t)
+	e.must("login", "--server", s.url, "--key", s.key)
+	if who := e.must("whoami"); !strings.Contains(who, "jrdn") || !strings.Contains(who, s.url) {
+		t.Errorf("whoami with default server = %q", who)
+	}
+	e.must("project", "create", "demo")
+	if ls := e.must("project", "ls"); !strings.Contains(ls, "demo") {
+		t.Errorf("project ls = %q", ls)
+	}
+	// Task commands outside a repo stay local.
+	if out := e.must("ls"); strings.Contains(out, "error") {
+		t.Errorf("local ls = %q", out)
+	}
+	e.must("logout")
+	if o, code := e.run("whoami"); code == 0 || !strings.Contains(o, "tt login --server") {
+		t.Errorf("whoami after logout (exit %d): %s", code, o)
+	}
+}

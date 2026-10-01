@@ -82,6 +82,25 @@ func normalizeServer(s string) string {
 	return strings.TrimSuffix(strings.TrimSpace(s), "/")
 }
 
+// DefaultServer returns the server set by the last tt login, if any.
+func DefaultServer() (string, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return "", err
+	}
+	return cfg.DefaultServer, nil
+}
+
+// SetDefaultServer records (or, with "", clears) the default server.
+func SetDefaultServer(server string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	cfg.DefaultServer = normalizeServer(server)
+	return cfg.Save()
+}
+
 // Credential is a stored login for one server. With Storage "keychain" the
 // key lives in the OS keychain and Key is empty on disk.
 type Credential struct {
