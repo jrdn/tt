@@ -194,6 +194,8 @@ export TT_ADMINS=your-github-login
 tt server --addr :8080
 ```
 
+For local development, `mise run server` builds tt and runs it against the Docker Postgres from `mise run pg:up` (started if needed), creating the database and a persistent master key in `~/.tt-master-key` on first run. Put GitHub credentials and other settings in the `[env]` section of `mise.local.toml` (gitignored; see `mise.local.toml.example`).
+
 Create a GitHub OAuth app with the callback URL `$TT_BASE_URL/auth/github/callback`. Migrations run automatically on start. Put TLS in front with a reverse proxy, and don't let it buffer responses from `/api/v1/projects/*/events`, which stream live updates.
 
 Without GitHub (local development, or bootstrapping), create users and keys directly:

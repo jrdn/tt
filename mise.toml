@@ -38,6 +38,11 @@ description = "Run end-to-end tests with the real tt binary, local and against a
 env = { TT_TEST_POSTGRES_URL = "postgres://postgres:tt@localhost:55432/tt_test?sslmode=disable" }
 run = "go test -tags e2e -count=1 ./e2e/..."
 
+[tasks.server]
+description = "Build and run a local tt server (settings in mise.local.toml [env]; starts Postgres if needed)"
+depends = ["build"]
+run = "./scripts/dev-server.sh"
+
 [tasks.run]
 description = "Run tt (pass args via -- e.g. mise run run -- ls)"
 run = "go run ./cmd/tt"
