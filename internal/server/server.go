@@ -127,7 +127,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /auth/logout", s.handleLogout)
 	mux.HandleFunc("POST /auth/device/start", s.handleDeviceStart)
 	mux.HandleFunc("GET /auth/device", s.handleDevicePage)
+	mux.HandleFunc("POST /auth/device/confirm", s.handleDeviceConfirm)
 	mux.HandleFunc("POST /auth/device/approve", s.handleDeviceApprove)
+	mux.HandleFunc("GET /auth/cli", s.handleCLILoginPage)
+	mux.HandleFunc("POST /auth/cli/approve", s.handleCLILoginApprove)
+	mux.HandleFunc("POST /auth/cli/token", s.handleCLILoginToken)
 	mux.HandleFunc("POST /auth/device/token", s.handleDevicePoll)
 	mux.HandleFunc("GET /{$}", api.ServerIndex)
 

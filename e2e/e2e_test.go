@@ -6,15 +6,20 @@
 package e2e
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -133,6 +138,21 @@ type server struct {
 	url   string
 	key   string // API key for jrdn, a server admin
 	admin *env   // env with TT_DATABASE_URL etc., for `tt server` subcommands
+	db    *sql.DB
+	jrdn  string // jrdn's principal ID
+}
+
+// session logs jrdn in as a browser would after GitHub sign-in, returning
+// the session cookie value.
+func (s *server) session(t *testing.T) string {
+	t.Helper()
+	token := randHex(32)
+	sum := sha256.Sum256([]byte(token))
+	if _, err := s.db.Exec(`INSERT INTO sessions (token_hash, principal_id, expires_at) VALUES ($1, $2, now() + interval '1 hour')`,
+		sum[:], s.jrdn); err != nil {
+		t.Fatal(err)
+	}
+	return token
 }
 
 func startServer(t *testing.T) *server {
@@ -163,8 +183,14 @@ func startServer(t *testing.T) *server {
 		"TT_MASTER_KEY", base64.StdEncoding.EncodeToString(master),
 		"TT_BASE_URL", url,
 	)
-	admin.must("server", "add-user", "jrdn", "--admin")
+	added := admin.must("server", "add-user", "jrdn", "--admin")
+	jrdn := regexp.MustCompile(`prn_[0-9a-z]+`).FindString(added)
 	key := strings.TrimSpace(admin.must("server", "create-key", "jrdn"))
+	db, err := sql.Open("pgx", admin.vars["TT_DATABASE_URL"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
 
 	var logs bytes.Buffer
 	cmd := exec.Command(ttBin, "server", "--addr", "127.0.0.1:"+port)
@@ -188,7 +214,7 @@ func startServer(t *testing.T) *server {
 			t.Fatalf("tt server didn't start:\n%s", logs.String())
 		}
 	}
-	return &server{url: url, key: key, admin: admin}
+	return &server{url: url, key: key, admin: admin, db: db, jrdn: jrdn}
 }
 
 func freePort(t *testing.T) string {
@@ -451,4 +477,147 @@ func diff(t *testing.T, a, b string) string {
 	os.WriteFile(fb, []byte(b), 0644)
 	out, _ := exec.Command("diff", "-u", fa, fb).CombinedOutput()
 	return string(out)
+}
+
+// background starts tt and returns a channel of its output lines and one
+// that yields the exit code.
+func (e *env) background(args ...string) (<-chan string, <-chan int) {
+	e.t.Helper()
+	cmd := exec.Command(ttBin, args...)
+	cmd.Dir, cmd.Env = e.dir, e.environ()
+	pr, pw, _ := os.Pipe()
+	cmd.Stdout, cmd.Stderr = pw, pw
+	if err := cmd.Start(); err != nil {
+		e.t.Fatal(err)
+	}
+	pw.Close()
+	lines, exit := make(chan string, 64), make(chan int, 1)
+	go func() {
+		sc := bufio.NewScanner(pr)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+	go func() {
+		err := cmd.Wait()
+		code := 0
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			code = ee.ExitCode()
+		}
+		exit <- code
+	}()
+	e.t.Cleanup(func() { cmd.Process.Kill() })
+	return lines, exit
+}
+
+// waitLine returns the first output line matching re.
+func waitLine(t *testing.T, lines <-chan string, re *regexp.Regexp) string {
+	t.Helper()
+	timeout := time.After(15 * time.Second)
+	for {
+		select {
+		case l, ok := <-lines:
+			if !ok {
+				t.Fatalf("tt exited before printing %s", re)
+			}
+			if m := re.FindString(l); m != "" {
+				return m
+			}
+		case <-timeout:
+			t.Fatalf("timed out waiting for %s", re)
+		}
+	}
+}
+
+func waitExit(t *testing.T, exit <-chan int, lines <-chan string) {
+	t.Helper()
+	select {
+	case code := <-exit:
+		var rest []string
+		for l := range lines {
+			rest = append(rest, l)
+		}
+		if code != 0 {
+			t.Fatalf("tt login exited %d:\n%s", code, strings.Join(rest, "\n"))
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("tt login didn't finish")
+	}
+}
+
+// browserPost submits a form as jrdn's logged-in browser, following
+// redirects (for the loopback flow, to the CLI's own listener).
+func browserPost(t *testing.T, s *server, session, path string, form url.Values) (int, string) {
+	t.Helper()
+	req, _ := http.NewRequest("POST", s.url+path, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "tt_session", Value: session})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
+// TestLogin drives `tt login` (loopback, the default) and `tt login
+// --device` with the real CLI, playing the browser's part.
+func TestLogin(t *testing.T) {
+	s := startServer(t)
+	session := s.session(t)
+
+	t.Run("loopback", func(t *testing.T) {
+		e := newEnv(t)
+		gitInit(t, e.dir)
+		e.must("init", "--server", s.url, "--project", "demo")
+		lines, exit := e.background("login", "--no-browser")
+		authURL := waitLine(t, lines, regexp.MustCompile(`http://\S+/auth/cli\?\S+`))
+
+		// The approval page, as the browser shows it.
+		req, _ := http.NewRequest("GET", authURL, nil)
+		req.AddCookie(&http.Cookie{Name: "tt_session", Value: session})
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		page, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		form := url.Values{}
+		for _, m := range regexp.MustCompile(`name="(\w+)" value="([^"]*)"`).FindAllStringSubmatch(string(page), -1) {
+			form.Set(m[1], html.UnescapeString(m[2]))
+		}
+		if form.Get("redirect_uri") == "" {
+			t.Fatalf("approval page has no form:\n%s", page)
+		}
+		// Approving redirects to the CLI's listener, which answers.
+		code, body := browserPost(t, s, session, "/auth/cli/approve", form)
+		if code != 200 || !strings.Contains(body, "Logged in to tt") {
+			t.Fatalf("after approve: %d %s", code, body)
+		}
+		waitExit(t, exit, lines)
+		if who := e.must("whoami"); !strings.Contains(who, "jrdn") {
+			t.Errorf("whoami after login = %q", who)
+		}
+	})
+
+	t.Run("device", func(t *testing.T) {
+		e := newEnv(t)
+		lines, exit := e.background("login", "--device", "--server", s.url)
+		userCode := waitLine(t, lines, regexp.MustCompile(`^\s*[A-Z0-9]{4}-[A-Z0-9]{4}\s*$`))
+		userCode = strings.TrimSpace(userCode)
+		if code, page := browserPost(t, s, session, "/auth/device/confirm", url.Values{"user_code": {userCode}}); code != 200 ||
+			!strings.Contains(page, "Approve") {
+			t.Fatalf("confirm: %d %s", code, page)
+		}
+		if code, _ := browserPost(t, s, session, "/auth/device/approve", url.Values{"user_code": {userCode}}); code != 200 {
+			t.Fatalf("approve: %d", code)
+		}
+		waitExit(t, exit, lines)
+		if who := e.must("whoami", "--server", s.url); !strings.Contains(who, "jrdn") {
+			t.Errorf("whoami after device login = %q", who)
+		}
+	})
 }

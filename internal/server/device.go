@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"html"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -39,7 +38,9 @@ func hashCode(code string) []byte {
 	return h[:]
 }
 
-// handleDeviceStart begins a login for the CLI.
+// handleDeviceStart begins a login for the CLI. The response deliberately
+// has no URL with the code filled in: the user must type the code, so a
+// phished link alone can't get a login approved.
 func (s *Server) handleDeviceStart(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ClientName string `json:"client_name"`
@@ -55,48 +56,43 @@ func (s *Server) handleDeviceStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	verify := strings.TrimSuffix(s.cfg.BaseURL, "/") + "/auth/device"
 	writeJSON(w, http.StatusOK, map[string]any{
-		"device_code":               deviceCode,
-		"user_code":                 userCode,
-		"verification_uri":          verify,
-		"verification_uri_complete": verify + "?user_code=" + url.QueryEscape(userCode),
-		"expires_in":                int(deviceLoginTTL.Seconds()),
-		"interval":                  2,
+		"device_code":      deviceCode,
+		"user_code":        userCode,
+		"verification_uri": trimSlash(s.cfg.BaseURL) + "/auth/device",
+		"expires_in":       int(deviceLoginTTL.Seconds()),
+		"interval":         2,
 	})
 }
 
-// handleDevicePage shows the approval page, sending the user through
-// GitHub login first if needed.
-func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
-	userCode := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("user_code")))
-	p := s.sessionUser(r)
-	if p == nil {
-		http.Redirect(w, r, "/auth/github/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
-		return
+// normalizeUserCode accepts codes typed with any case, spacing or dash.
+func normalizeUserCode(c string) string {
+	c = strings.ToUpper(strings.NewReplacer(" ", "", "-", "").Replace(c))
+	if len(c) == 8 {
+		return c[:4] + "-" + c[4:]
 	}
-	var client string
-	err := s.dir.db.GetContext(r.Context(), &client, `SELECT client_name FROM device_logins
-		WHERE user_code = $1 AND principal_id IS NULL AND expires_at > now()`, userCode)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err != nil {
-		fmt.Fprint(w, `<!doctype html><title>tt login</title><form method="get">
-			<p>Enter the code shown by <code>tt login</code>:</p>
-			<input name="user_code" autofocus> <button>Continue</button></form>`)
-		return
-	}
-	fmt.Fprintf(w, `<!doctype html><title>tt login</title><form method="post" action="/auth/device/approve">
-		<p>Log in to tt as <b>%s</b> on <b>%s</b>?</p>
-		<p>Code: <code>%s</code> (check it matches your terminal)</p>
-		<input type="hidden" name="user_code" value="%s"><button>Approve</button></form>`,
-		html.EscapeString(p.Handle), html.EscapeString(client), html.EscapeString(userCode), html.EscapeString(userCode))
+	return c
 }
 
-// handleDeviceApprove marks a login approved by the browser's user. The
-// session cookie is SameSite=Lax, so cross-site form posts can't reach
-// here; the Origin check is a second guard.
-func (s *Server) handleDeviceApprove(w http.ResponseWriter, r *http.Request) {
-	if o := r.Header.Get("Origin"); o != "" && o != strings.TrimSuffix(s.cfg.BaseURL, "/") {
+// handleDevicePage asks for the code shown by `tt login --device`. Any code
+// in the URL is ignored: it has to be typed.
+func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
+	if s.sessionUser(r) == nil {
+		http.Redirect(w, r, "/auth/github/login?next=/auth/device", http.StatusFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, `<!doctype html><title>tt login</title>
+<form method="post" action="/auth/device/confirm">
+<p>Enter the code shown by <code>tt login --device</code> on the machine you are logging in from.
+Only continue if you started that login yourself.</p>
+<input name="user_code" autocomplete="off" autofocus> <button>Continue</button></form>`)
+}
+
+// handleDeviceConfirm shows which login the typed code belongs to before
+// the user approves it.
+func (s *Server) handleDeviceConfirm(w http.ResponseWriter, r *http.Request) {
+	if !s.sameOrigin(r) {
 		writeErr(w, http.StatusForbidden, "cross-origin request")
 		return
 	}
@@ -105,10 +101,47 @@ func (s *Server) handleDeviceApprove(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "log in first")
 		return
 	}
-	userCode := r.FormValue("user_code")
+	userCode := normalizeUserCode(r.FormValue("user_code"))
+	var req struct {
+		Client    string    `db:"client_name"`
+		CreatedAt time.Time `db:"created_at"`
+	}
+	err := s.dir.db.GetContext(r.Context(), &req, `SELECT client_name, created_at FROM device_logins
+		WHERE user_code = $1 AND principal_id IS NULL AND expires_at > now()`, userCode)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `<!doctype html><title>tt login</title><p>That code is unknown or expired.
+<a href="/auth/device">Try again</a>.</p>`)
+		return
+	}
+	fmt.Fprintf(w, `<!doctype html><title>tt login</title>
+<form method="post" action="/auth/device/approve">
+<p>Log in to tt as <b>%s</b> from the tt CLI on <b>%s</b>, requested %s ago?</p>
+<input type="hidden" name="user_code" value="%s"><button>Approve</button></form>`,
+		html.EscapeString(p.Handle), html.EscapeString(req.Client),
+		s.now().Sub(req.CreatedAt).Round(time.Second), html.EscapeString(userCode))
+}
+
+// handleDeviceApprove marks a login approved by the browser's user.
+func (s *Server) handleDeviceApprove(w http.ResponseWriter, r *http.Request) {
+	if !s.sameOrigin(r) {
+		writeErr(w, http.StatusForbidden, "cross-origin request")
+		return
+	}
+	p := s.sessionUser(r)
+	if p == nil {
+		writeErr(w, http.StatusUnauthorized, "log in first")
+		return
+	}
 	res, err := s.dir.db.ExecContext(r.Context(), `UPDATE device_logins SET principal_id = $2
-		WHERE user_code = $1 AND principal_id IS NULL AND expires_at > now()`, userCode, p.ID)
-	if n, _ := res.RowsAffected(); err != nil || n == 0 {
+		WHERE user_code = $1 AND principal_id IS NULL AND expires_at > now()`,
+		normalizeUserCode(r.FormValue("user_code")), p.ID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
 		writeErr(w, http.StatusBadRequest, "unknown or expired code")
 		return
 	}
@@ -146,21 +179,15 @@ func (s *Server) handleDevicePoll(w http.ResponseWriter, r *http.Request) {
 	// One-shot: delete before minting so a replayed poll gets nothing.
 	res, err := s.dir.db.ExecContext(r.Context(), `DELETE FROM device_logins WHERE device_code_hash = $1`,
 		hashCode(body.DeviceCode))
-	if n, _ := res.RowsAffected(); err != nil || n == 0 {
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
 		writeErr(w, http.StatusBadRequest, "expired_token")
 		return
 	}
-	p, err := s.dir.PrincipalByID(r.Context(), *row.PrincipalID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	k, key, err := s.dir.CreateKey(r.Context(), p, p, "tt login: "+row.Client, nil, "", s.now().Add(s.cfg.LoginTTL))
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"key": key, "key_id": k.ID, "handle": p.Handle, "expires_at": k.ExpiresAt})
+	s.issueLoginKey(w, r, *row.PrincipalID, row.Client)
 }
 
 // sessionUser returns the logged-in browser user, or nil.

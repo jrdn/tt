@@ -2,10 +2,18 @@ package cmd
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
+	"runtime"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -60,15 +68,18 @@ func accountCmd(c *cobra.Command, server *string) *cobra.Command {
 
 func newLoginCmd() *cobra.Command {
 	var server, key string
+	var device, noBrowser bool
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Log in to a tt server",
-		Long: `Log in to a tt server. By default this starts a browser login: open the URL
-shown, check the code matches, and approve. The CLI then receives an API key
-(90 days by default) and stores it in the OS keychain (macOS Keychain,
-Secret Service on Linux, Windows Credential Manager). Without a keychain, or
-with TT_KEYRING=off, it goes in credentials.json in the tt config directory
-(mode 0600).
+		Long: `Log in to a tt server. By default this opens your browser; sign in with GitHub
+if asked and approve. The CLI then receives an API key (90 days by default)
+and stores it in the OS keychain (macOS Keychain, Secret Service on Linux,
+Windows Credential Manager). Without a keychain, or with TT_KEYRING=off, it
+goes in credentials.json in the tt config directory (mode 0600).
+
+With --device, log in from a machine without a browser (e.g. over SSH): open
+the URL shown on any device and type the code.
 
 With --key, store an existing API key instead (e.g. one from tt server create-key).`,
 		Args: cobra.NoArgs,
@@ -78,10 +89,15 @@ With --key, store an existing API key instead (e.g. one from tt server create-ke
 				return err
 			}
 			ctx := cmd.Context()
-			if key == "" {
-				if key, err = deviceLogin(ctx, client.New(srv, "")); err != nil {
-					return err
-				}
+			switch {
+			case key != "":
+			case device:
+				key, err = deviceLogin(ctx, client.New(srv, ""))
+			default:
+				key, err = loopbackLogin(ctx, client.New(srv, ""), !noBrowser)
+			}
+			if err != nil {
+				return err
 			}
 			var who auth.Claims
 			if err := client.New(srv, key).Do(ctx, "GET", "/api/v1/whoami", nil, &who); err != nil {
@@ -96,24 +112,105 @@ With --key, store an existing API key instead (e.g. one from tt server create-ke
 		},
 	}
 	cmd.Flags().StringVar(&key, "key", "", "Store this API key instead of logging in with a browser")
+	cmd.Flags().BoolVar(&device, "device", false, "Log in from a machine without a browser: type a code on another device")
+	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "Print the login URL instead of opening a browser")
 	return accountCmd(cmd, &server)
 }
 
-// deviceLogin runs the browser approval flow and returns the issued key.
+// loopbackLogin runs the default browser login (RFC 8252 with PKCE): the
+// server redirects a one-time code to a listener on 127.0.0.1, and only this
+// process, holding the PKCE verifier, can redeem it.
+func loopbackLogin(ctx context.Context, c *client.Client, openBrowser bool) (string, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", fmt.Errorf("start login listener: %w (try tt login --device)", err)
+	}
+	redirect := fmt.Sprintf("http://127.0.0.1:%d/callback", ln.Addr().(*net.TCPAddr).Port)
+	state, verifier := randomToken(16), randomToken(32)
+	sum := sha256.Sum256([]byte(verifier))
+	host, _ := os.Hostname()
+	authURL := c.Server + "/auth/cli?" + url.Values{
+		"redirect_uri":          {redirect},
+		"state":                 {state},
+		"code_challenge":        {base64.RawURLEncoding.EncodeToString(sum[:])},
+		"code_challenge_method": {"S256"},
+		"client_name":           {host},
+	}.Encode()
+
+	codes := make(chan string, 1)
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if r.URL.Path != "/callback" || q.Get("state") != state || q.Get("code") == "" {
+			http.Error(w, "not a tt login response", http.StatusBadRequest)
+			return
+		}
+		fmt.Fprint(w, "<!doctype html><title>tt login</title><p>Logged in to tt. You can close this tab.</p>")
+		select {
+		case codes <- q.Get("code"):
+		default:
+		}
+	})}
+	go srv.Serve(ln)
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		srv.Shutdown(shutdown)
+	}()
+
+	if openBrowser && openURL(authURL) == nil {
+		fmt.Printf("Opening your browser to log in. If it doesn't open, visit:\n\n  %s\n\n", authURL)
+	} else {
+		fmt.Printf("Open this URL in a browser on this machine to log in:\n\n  %s\n\n", authURL)
+	}
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-time.After(5 * time.Minute):
+		return "", fmt.Errorf("login timed out; run tt login again")
+	case code := <-codes:
+		var resp struct {
+			Key string `json:"key"`
+		}
+		err := c.Anonymous(ctx, "POST", "/auth/cli/token",
+			map[string]string{"code": code, "code_verifier": verifier, "redirect_uri": redirect}, &resp)
+		return resp.Key, err
+	}
+}
+
+func randomToken(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// openURL opens u in the default browser.
+func openURL(u string) error {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("open", u).Start()
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", u).Start()
+	default:
+		return exec.Command("xdg-open", u).Start()
+	}
+}
+
+// deviceLogin logs in from a machine without a browser: the user types the
+// code on another device, then the poll returns the issued key.
 func deviceLogin(ctx context.Context, c *client.Client) (string, error) {
 	host, _ := os.Hostname()
 	var start struct {
-		DeviceCode  string `json:"device_code"`
-		UserCode    string `json:"user_code"`
-		URIComplete string `json:"verification_uri_complete"`
-		ExpiresIn   int    `json:"expires_in"`
-		Interval    int    `json:"interval"`
+		DeviceCode string `json:"device_code"`
+		UserCode   string `json:"user_code"`
+		URI        string `json:"verification_uri"`
+		ExpiresIn  int    `json:"expires_in"`
+		Interval   int    `json:"interval"`
 	}
 	if err := c.Anonymous(ctx, "POST", "/auth/device/start", map[string]string{"client_name": host}, &start); err != nil {
 		return "", err
 	}
-	fmt.Printf("Open this URL to log in, and check the code matches %s:\n\n  %s\n\nWaiting for approval...\n",
-		start.UserCode, start.URIComplete)
+	fmt.Printf("On any device, open:\n\n  %s\n\nand enter the code:\n\n  %s\n\nWaiting for approval...\n",
+		start.URI, start.UserCode)
 	deadline := time.Now().Add(time.Duration(start.ExpiresIn) * time.Second)
 	for time.Now().Before(deadline) {
 		select {

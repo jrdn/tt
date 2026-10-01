@@ -6,11 +6,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -273,57 +276,181 @@ func TestServer_ProjectsAreIsolated(t *testing.T) {
 	}
 }
 
-// TestServer_DeviceLogin drives the tt login flow: start, approve in a
-// logged-in browser, poll for a key that then works.
+// browser makes requests as a logged-in browser: session cookie, no
+// automatic redirects.
+type browser struct {
+	t       *testing.T
+	base    string
+	session string
+	origin  string
+}
+
+func (b *browser) do(method, path string, form url.Values) (*http.Response, string) {
+	b.t.Helper()
+	var body io.Reader
+	if form != nil {
+		body = strings.NewReader(form.Encode())
+	}
+	req, _ := http.NewRequest(method, b.base+path, body)
+	if form != nil {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	if b.session != "" {
+		req.AddCookie(&http.Cookie{Name: sessionCookie, Value: b.session})
+	}
+	if b.origin != "" {
+		req.Header.Set("Origin", b.origin)
+	}
+	c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := c.Do(req)
+	if err != nil {
+		b.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	return resp, string(data)
+}
+
+func pkce() (verifier, challenge string) {
+	verifier = "verifier-" + task.NewID() + task.NewID() + task.NewID() + task.NewID() + task.NewID()
+	sum := sha256.Sum256([]byte(verifier))
+	return verifier, base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// TestServer_CLILogin covers the loopback login: only loopback redirects,
+// approval needs a same-origin logged-in browser, and a code is redeemable
+// once, with the right verifier and redirect_uri.
+func TestServer_CLILogin(t *testing.T) {
+	srv, hs := newTestServer(t)
+	ctx := context.Background()
+	alice, _ := srv.Directory().CreateUser(ctx, "alice", nil, false)
+	session, _ := srv.Directory().CreateSession(ctx, alice.ID, time.Hour)
+	anon := &client{t: t, base: hs.URL}
+	b := &browser{t: t, base: hs.URL, session: session}
+	verifier, challenge := pkce()
+	const redirect = "http://127.0.0.1:5555/callback"
+	params := func(redirect string) url.Values {
+		return url.Values{"redirect_uri": {redirect}, "state": {"st8"}, "code_challenge": {challenge},
+			"code_challenge_method": {"S256"}, "client_name": {"laptop"}}
+	}
+
+	for _, bad := range []string{"http://evil.example/callback", "https://127.0.0.1:5555/callback",
+		"http://127.0.0.1.evil.example:5555/callback", "http://127.0.0.1:5555/other", "http://127.0.0.1/callback",
+		"http://localhost:5555/callback", "http://user@127.0.0.1:5555/callback", "http://127.0.0.1:5555/callback?x=1"} {
+		if resp, _ := b.do("GET", "/auth/cli?"+params(bad).Encode(), nil); resp.StatusCode != 400 {
+			t.Errorf("redirect_uri %s accepted (%d)", bad, resp.StatusCode)
+		}
+		if resp, _ := b.do("POST", "/auth/cli/approve", params(bad)); resp.StatusCode != 400 {
+			t.Errorf("approve with redirect_uri %s accepted (%d)", bad, resp.StatusCode)
+		}
+	}
+	if resp, _ := (&browser{t: t, base: hs.URL}).do("GET", "/auth/cli?"+params(redirect).Encode(), nil); resp.StatusCode != 302 ||
+		!strings.HasPrefix(resp.Header.Get("Location"), "/auth/github/login?next=") {
+		t.Errorf("approval page without session = %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if resp, page := b.do("GET", "/auth/cli?"+params(redirect).Encode(), nil); resp.StatusCode != 200 ||
+		!strings.Contains(page, "alice") || !strings.Contains(page, "laptop") {
+		t.Errorf("approval page = %d\n%s", resp.StatusCode, page)
+	}
+	if resp, _ := (&browser{t: t, base: hs.URL}).do("POST", "/auth/cli/approve", params(redirect)); resp.StatusCode != 401 {
+		t.Errorf("approve without session = %d", resp.StatusCode)
+	}
+	evil := &browser{t: t, base: hs.URL, session: session, origin: "https://evil.example"}
+	if resp, _ := evil.do("POST", "/auth/cli/approve", params(redirect)); resp.StatusCode != 403 {
+		t.Errorf("cross-origin approve = %d", resp.StatusCode)
+	}
+
+	approve := func() string {
+		t.Helper()
+		resp, _ := b.do("POST", "/auth/cli/approve", params(redirect))
+		loc, _ := url.Parse(resp.Header.Get("Location"))
+		if resp.StatusCode != 302 || loc == nil || !strings.HasPrefix(loc.String(), redirect+"?") || loc.Query().Get("state") != "st8" {
+			t.Fatalf("approve = %d %s", resp.StatusCode, resp.Header.Get("Location"))
+		}
+		return loc.Query().Get("code")
+	}
+	redeem := func(code, verifier, redirect string) (int, map[string]any) {
+		return anon.do("POST", "/auth/cli/token", map[string]string{"code": code, "code_verifier": verifier, "redirect_uri": redirect})
+	}
+
+	// A wrong verifier fails and burns the code.
+	code := approve()
+	if c, _ := redeem(code, "wrong", redirect); c != 400 {
+		t.Errorf("wrong verifier = %d", c)
+	}
+	if c, _ := redeem(code, verifier, redirect); c != 400 {
+		t.Errorf("code reusable after a failed attempt (%d)", c)
+	}
+	if c, _ := redeem(approve(), verifier, "http://127.0.0.1:6666/callback"); c != 400 {
+		t.Errorf("mismatched redirect_uri = %d", c)
+	}
+
+	code = approve()
+	c, out := redeem(code, verifier, redirect)
+	if c != 200 {
+		t.Fatalf("redeem = %d %v", c, out)
+	}
+	if who := anon.as(out["key"].(string)).must(200, "GET", "/api/v1/whoami", nil); who["handle"] != "alice" {
+		t.Errorf("whoami = %v", who)
+	}
+	if c, _ := redeem(code, verifier, redirect); c != 400 {
+		t.Errorf("code redeemed twice (%d)", c)
+	}
+}
+
+// TestServer_DeviceLogin covers `tt login --device`: the code must be typed
+// (a code in the URL is ignored), and the confirmation names the machine.
 func TestServer_DeviceLogin(t *testing.T) {
 	srv, hs := newTestServer(t)
 	ctx := context.Background()
 	alice, _ := srv.Directory().CreateUser(ctx, "alice", nil, false)
 	session, _ := srv.Directory().CreateSession(ctx, alice.ID, time.Hour)
 	anon := &client{t: t, base: hs.URL}
+	b := &browser{t: t, base: hs.URL, session: session}
 
 	start := anon.must(200, "POST", "/auth/device/start", map[string]string{"client_name": "laptop"})
 	device, userCode := start["device_code"].(string), start["user_code"].(string)
+	if _, ok := start["verification_uri_complete"]; ok {
+		t.Error("start response includes a URL with the code filled in")
+	}
 	if code, out := anon.do("POST", "/auth/device/token", map[string]string{"device_code": device}); code != 400 ||
 		out["error"] != "authorization_pending" {
 		t.Fatalf("poll before approval = %d %v", code, out)
 	}
 
-	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	form := func(cookie bool, code string) int {
-		req, _ := http.NewRequest("POST", hs.URL+"/auth/device/approve", strings.NewReader("user_code="+code))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		if cookie {
-			req.AddCookie(&http.Cookie{Name: sessionCookie, Value: session})
-		}
-		resp, err := noRedirect.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		return resp.StatusCode
+	// A link with the code in it gets only the blank form.
+	if resp, page := b.do("GET", "/auth/device?user_code="+userCode, nil); resp.StatusCode != 200 ||
+		strings.Contains(page, userCode) || strings.Contains(page, "Approve") {
+		t.Errorf("device page used the code from the URL:\n%s", page)
 	}
-	// Without a session the page redirects to login and approval is refused.
-	resp, _ := noRedirect.Get(hs.URL + "/auth/device?user_code=" + userCode)
-	if resp.StatusCode != http.StatusFound || !strings.HasPrefix(resp.Header.Get("Location"), "/auth/github/login?next=") {
-		t.Errorf("device page without session = %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	if resp, _ := (&browser{t: t, base: hs.URL}).do("GET", "/auth/device", nil); resp.StatusCode != 302 {
+		t.Errorf("device page without session = %d", resp.StatusCode)
 	}
-	if code := form(false, userCode); code != 401 {
-		t.Errorf("approve without session = %d, want 401", code)
+
+	// Typed loosely (lower case, no dash), the code finds the request.
+	typed := strings.ToLower(strings.ReplaceAll(userCode, "-", ""))
+	if resp, page := b.do("POST", "/auth/device/confirm", url.Values{"user_code": {typed}}); resp.StatusCode != 200 ||
+		!strings.Contains(page, "laptop") || !strings.Contains(page, "Approve") {
+		t.Errorf("confirm = %d\n%s", resp.StatusCode, page)
 	}
-	if code := form(true, "WRONG-CODE"); code != 400 {
-		t.Errorf("approve wrong code = %d, want 400", code)
+	if resp, _ := b.do("POST", "/auth/device/confirm", url.Values{"user_code": {"WRNG-CODE"}}); resp.StatusCode != 400 {
+		t.Errorf("confirm with wrong code = %d", resp.StatusCode)
 	}
-	if code := form(true, userCode); code != 200 {
-		t.Fatalf("approve = %d", code)
+	evil := &browser{t: t, base: hs.URL, session: session, origin: "https://evil.example"}
+	if resp, _ := evil.do("POST", "/auth/device/approve", url.Values{"user_code": {userCode}}); resp.StatusCode != 403 {
+		t.Errorf("cross-origin approve = %d", resp.StatusCode)
+	}
+	if resp, _ := (&browser{t: t, base: hs.URL}).do("POST", "/auth/device/approve", url.Values{"user_code": {userCode}}); resp.StatusCode != 401 {
+		t.Errorf("approve without session = %d", resp.StatusCode)
+	}
+	if resp, _ := b.do("POST", "/auth/device/approve", url.Values{"user_code": {typed}}); resp.StatusCode != 200 {
+		t.Fatalf("approve = %d", resp.StatusCode)
 	}
 
 	got := anon.must(200, "POST", "/auth/device/token", map[string]string{"device_code": device})
-	key := got["key"].(string)
-	if who := anon.as(key).must(200, "GET", "/api/v1/whoami", nil); who["handle"] != "alice" {
+	if who := anon.as(got["key"].(string)).must(200, "GET", "/api/v1/whoami", nil); who["handle"] != "alice" {
 		t.Errorf("whoami with login key = %v", who)
 	}
-	// The device code is single-use.
 	anon.must(400, "POST", "/auth/device/token", map[string]string{"device_code": device})
 }
 

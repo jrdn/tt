@@ -143,7 +143,7 @@ tt init --server https://tt.example.com --project myproj   # writes .tt.json
 tt login                                                   # once per machine
 ```
 
-`tt login` prints a URL and a code; open the URL, sign in with GitHub, check the code matches and approve. The CLI receives an API key (90 days by default) and stores it in the OS keychain (macOS Keychain, Linux Secret Service, Windows Credential Manager). Without a keychain, or with `TT_KEYRING=off`, it goes in `credentials.json` in the tt config directory with mode 0600. `tt login --key <key>` stores an existing key instead.
+`tt login` opens your browser; sign in with GitHub if asked and click Approve. The browser hands a one-time code back to the CLI on `127.0.0.1`, which redeems it with a secret only it holds (PKCE), so a forwarded login link is useless to anyone else. On a machine without a browser (e.g. over SSH), use `tt login --device`: open the URL it prints on any device and type the code. Either way the CLI receives an API key (90 days by default) and stores it in the OS keychain (macOS Keychain, Linux Secret Service, Windows Credential Manager). Without a keychain, or with `TT_KEYRING=off`, it goes in `credentials.json` in the tt config directory with mode 0600. `tt login --key <key>` stores an existing key instead.
 
 After that every command (`tt ls`, `tt add`, `tt next`, `tt tui`, `tt web`, …) works against the server project, with the same output as local mode. The one difference: the server records who made each change from your login, so `--author` and `--created-by` are ignored.
 
