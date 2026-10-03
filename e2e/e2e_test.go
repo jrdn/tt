@@ -67,8 +67,15 @@ func newEnv(t *testing.T) *env {
 	home := t.TempDir()
 	editor := filepath.Join(home, "editor.sh")
 	// A scripted $EDITOR for `tt edit`: retitle, reprioritize, clear the assignee.
-	script := "#!/bin/sh\nsed -i.bak -e 's/^# .*/# Edited in editor/' -e 's/^priority: .*/priority: 1/' -e 's/^assignee:.*/assignee:/' \"$1\"\n"
+	// A scripted $EDITOR: applies the sed script in $HOME/edit.sed, set per
+	// edit with setEditor. The default retitles, reprioritizes and clears
+	// the assignee.
+	script := "#!/bin/sh\nsed -i.bak -f \"$HOME/edit.sed\" \"$1\"\n"
 	if err := os.WriteFile(editor, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "edit.sed"),
+		[]byte("s/^# .*/# Edited in editor/\ns/^priority: .*/priority: 1/\ns/^assignee:.*/assignee:/\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(home, "work")
@@ -85,6 +92,15 @@ func newEnv(t *testing.T) *env {
 		e.vars["GOCOVERDIR"] = d
 	}
 	return e
+}
+
+// setEditor makes the next `tt edit` / `tt add` (no title) apply these sed
+// commands to the task file.
+func (e *env) setEditor(cmds ...string) {
+	e.t.Helper()
+	if err := os.WriteFile(filepath.Join(e.vars["HOME"], "edit.sed"), []byte(strings.Join(cmds, "\n")+"\n"), 0644); err != nil {
+		e.t.Fatal(err)
+	}
 }
 
 func (e *env) with(kv ...string) *env {
@@ -356,6 +372,115 @@ func scenario(t *testing.T, e *env, mode string) string {
 	return out.String()
 }
 
+// scenarioMore covers the flags and forms scenario doesn't: every update
+// field (set and clear), several IDs at once, every relation type, --json
+// on write commands, full edits, and creating a task from the editor.
+func scenarioMore(t *testing.T, e *env, mode string) string {
+	n := &normalizer{ids: map[string]string{}}
+	var out strings.Builder
+	step := func(args ...string) string {
+		t.Helper()
+		o, code := e.run(args...)
+		fmt.Fprintf(&out, "$ tt %s  [exit %d]\n%s\n", n.apply(strings.Join(args, " ")), code, n.apply(o))
+		return o
+	}
+	track := func(name, o string) string {
+		t.Helper()
+		var tk struct{ ID string }
+		if err := json.Unmarshal([]byte(o), &tk); err != nil || tk.ID == "" {
+			t.Fatalf("[%s] no task in %q: %v", mode, o, err)
+		}
+		n.ids[tk.ID] = name
+		n.ids[tk.ID[:4]] = name[:len(name)-1] + ":4>"
+		fmt.Fprintf(&out, "(created %s)\n%s\n", name, n.apply(o))
+		return tk.ID
+	}
+	check := func(cond bool, format string, args ...any) {
+		t.Helper()
+		if !cond {
+			t.Errorf("[%s] "+format, append([]any{mode}, args...)...)
+		}
+	}
+	field := func(id, name string) any {
+		t.Helper()
+		var d struct{ Task map[string]any }
+		json.Unmarshal([]byte(e.must("show", id, "--json")), &d)
+		return d.Task[name]
+	}
+
+	p := track("<P>", e.must("add", "Parent", "--created-by", "jrdn", "--json"))
+	q := track("<Q>", e.must("add", "Other parent", "--created-by", "jrdn", "--json"))
+	// Positional description form.
+	x := track("<X>", e.must("add", "Xray", "positional description", "--created-by", "jrdn", "--json"))
+	y := track("<Y>", e.must("add", "Yankee", "--parent", p, "--assignee", "bot", "--due", "2026-05-01",
+		"-d", "desc", "--created-by", "jrdn", "--json"))
+	z := track("<Z>", e.must("add", "Zulu", "-p", "3", "--created-by", "jrdn", "--json"))
+	check(field(x, "description") == "positional description", "positional description not stored")
+
+	// Every update field, then clearing the optional ones.
+	step("update", y, "--description", "new body", "--assignee", "carol", "--parent", q, "--json")
+	check(field(y, "parent_id") == q && field(y, "assignee") == "carol" && field(y, "description") == "new body",
+		"update didn't set description/assignee/parent")
+	step("update", y, "--assignee", "", "--description", "", "--due", "")
+	check(field(y, "assignee") == nil && field(y, "due_date") == nil, "update with empty values didn't clear fields")
+	step("update", y, "--parent", p)
+	step("update", y, "--due", "not-a-date")
+	step("update", y, "--parent", "zzzzzzz")
+	step("update", y, "--priority", "7")
+
+	// Several IDs at once, with JSON output.
+	step("update", x, z, "--priority", "1", "--json")
+	step("done", x, z, "--json")
+	check(field(x, "status") == "done" && field(z, "status") == "done", "done with two IDs didn't close both")
+	step("reopen", x, z, "--json")
+	step("cancel", x, z)
+	step("reopen", x, z)
+	step("assign", "dana", x, z, "--json")
+	check(field(z, "assignee") == "dana", "assign with two IDs missed one")
+	step("done", x, "zzzzzzz") // one bad ID among good ones
+
+	// Every relation type, with JSON output, and how show and graph render them.
+	step("relate", x, "duplicates", z, "--json")
+	step("relate", x, "related", y, "--json")
+	step("relate", z, "blocks", y, "--json")
+	step("relate", z, "blocks", y) // idempotent
+	step("show", x)
+	step("show", y)
+	step("graph")
+	step("unrelate", x, "duplicates", z)
+	step("unrelate", x, "related", y)
+	step("unrelate", z, "blocks", y)
+	step("show", x, "--json")
+
+	// Comment JSON, and claim JSON.
+	step("comment", x, "with **markdown**", "--json")
+	step("claim", z, "--as", "erin", "--json")
+
+	// A full edit: status, due date, parent, body; then clearing them.
+	e.setEditor("s/^status: .*/status: in_review/", "s/^due:.*/due: 2027-02-03/", "s/^parent:.*/parent: "+q+"/",
+		"$a\\", "Body added in the editor.")
+	step("edit", x)
+	check(field(x, "status") == "in_review" && field(x, "parent_id") == q && field(x, "due_date") == "2027-02-03",
+		"edit didn't apply status/due/parent")
+	e.setEditor("s/^due:.*/due:/", "s/^parent:.*/parent:/", "s/^status: .*/status: done/")
+	step("edit", x)
+	check(field(x, "parent_id") == nil && field(x, "closed_at") != nil, "edit didn't clear parent / set closed_at")
+	step("show", x)
+	e.setEditor("s/^status: .*/status: GARBAGE/")
+	step("edit", x)
+	check(field(x, "status") == "done", "edit saved an invalid status")
+
+	// Creating a task from the editor (no title).
+	e.setEditor("s/^# .*/# Made in the editor/", "s/^priority: .*/priority: 0/", "s/^assignee:.*/assignee: frank/")
+	track("<E>", e.must("add", "--created-by", "jrdn", "--json"))
+	ls := e.must("ls", "--json")
+	check(strings.Contains(ls, `"title": "Made in the editor"`) && strings.Contains(ls, `"assignee": "frank"`),
+		"task from the editor missing:\n%s", ls)
+
+	step("ls", "--all", "--json")
+	return out.String()
+}
+
 // TestParity runs the scenario locally and against a server project, then
 // imports the local database into a second project.
 func TestParity(t *testing.T) {
@@ -374,6 +499,21 @@ func TestParity(t *testing.T) {
 	if localOut != remoteOut {
 		t.Errorf("local and server transcripts differ:\n%s", diff(t, localOut, remoteOut))
 	}
+
+	t.Run("more", func(t *testing.T) {
+		l := newEnv(t)
+		gitInit(t, l.dir)
+		l = l.with("TASKS_DB", filepath.Join(l.dir, "more.db"))
+		r := remoteEnv(t, s, "more")
+		r.must("project", "create", "more")
+		lo, ro := scenarioMore(t, l, "local"), scenarioMore(t, r, "server")
+		if lo != ro {
+			t.Errorf("local and server transcripts differ:\n%s", diff(t, lo, ro))
+		}
+		if t.Failed() {
+			t.Logf("local transcript:\n%s", lo)
+		}
+	})
 
 	// Import keeps IDs, timestamps and authors, so exports match exactly.
 	remote.must("project", "create", "imported")

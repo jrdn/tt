@@ -29,7 +29,7 @@ func newAddCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// No title: open editor with blank template
 			if len(args) == 0 {
-				return addFromEditor(cmd.Context())
+				return addFromEditor(cmd.Context(), createdBy)
 			}
 
 			title := args[0]
@@ -82,7 +82,7 @@ func newAddCmd() *cobra.Command {
 	return cmd
 }
 
-func addFromEditor(ctx context.Context) error {
+func addFromEditor(ctx context.Context, createdBy string) error {
 	stub := &task.Task{Status: task.StatusOpen, Priority: 2}
 	template := serializeTask(stub)
 
@@ -130,6 +130,9 @@ func addFromEditor(ctx context.Context) error {
 		ParentID:    parsed.ParentID,
 		Assignee:    parsed.Assignee,
 		DueDate:     parsed.DueDate.StringPtr(),
+	}
+	if createdBy != "" {
+		opts.CreatedBy = &createdBy
 	}
 	t, err := store.Create(ctx, parsed.Title, opts)
 	if err != nil {

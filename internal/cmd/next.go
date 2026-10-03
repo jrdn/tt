@@ -49,6 +49,16 @@ Use this as the entry point for an agent work loop:
 			comments, _ := store.GetComments(cmd.Context(), t.ID)
 
 			if jsonOutput {
+				// Empty lists print as [], not null, in both modes.
+				if subtasks == nil {
+					subtasks = []task.Task{}
+				}
+				if rels == nil {
+					rels = []task.Relation{}
+				}
+				if comments == nil {
+					comments = []task.Comment{}
+				}
 				return printJSON(struct {
 					Task      *task.Task      `json:"task"`
 					Subtasks  []task.Task     `json:"subtasks"`

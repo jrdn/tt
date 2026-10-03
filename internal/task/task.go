@@ -55,11 +55,24 @@ func Validate(t *Task) error {
 	return nil
 }
 
-func validateParent(db *sqlx.DB, parentID string) error {
-	if _, err := Get(db, parentID); err != nil {
-		return fmt.Errorf("parent task %q not found", parentID)
+// resolveParent turns a parent ID or prefix into the parent's full ID.
+// self is the task being reparented ("" when creating).
+func resolveParent(db *sqlx.DB, parentID, self string) (*string, error) {
+	p, err := Get(db, parentID)
+	if err != nil {
+		return nil, fmt.Errorf("parent task %q not found", parentID)
 	}
-	return nil
+	if p.ID == self {
+		return nil, fmt.Errorf("a task can't be its own parent")
+	}
+	return &p.ID, nil
+}
+
+func nonEmpty(s *string) *string {
+	if s == nil || *s == "" {
+		return nil
+	}
+	return s
 }
 
 type Status string
@@ -181,9 +194,11 @@ func Create(db *sqlx.DB, title string, opts CreateOpts) (*Task, error) {
 		}
 	}
 	if opts.ParentID != nil {
-		if err := validateParent(db, *opts.ParentID); err != nil {
+		p, err := resolveParent(db, *opts.ParentID, "")
+		if err != nil {
 			return nil, err
 		}
+		opts.ParentID = p
 	}
 	if opts.DueDate != nil {
 		if err := validateDueDate(*opts.DueDate); err != nil {
@@ -311,12 +326,7 @@ func Update(db *sqlx.DB, prefix string, opts UpdateOpts) (*Task, error) {
 			return nil, err
 		}
 	}
-	if opts.ParentID != nil {
-		if err := validateParent(db, *opts.ParentID); err != nil {
-			return nil, err
-		}
-	}
-	if opts.DueDate != nil {
+	if opts.DueDate != nil && *opts.DueDate != "" {
 		if err := validateDueDate(*opts.DueDate); err != nil {
 			return nil, err
 		}
@@ -325,6 +335,12 @@ func Update(db *sqlx.DB, prefix string, opts UpdateOpts) (*Task, error) {
 	t, err := Get(db, prefix)
 	if err != nil {
 		return nil, err
+	}
+	var parent *string
+	if opts.ParentID != nil && *opts.ParentID != "" {
+		if parent, err = resolveParent(db, *opts.ParentID, t.ID); err != nil {
+			return nil, err
+		}
 	}
 
 	if opts.Status != nil {
@@ -339,20 +355,21 @@ func Update(db *sqlx.DB, prefix string, opts UpdateOpts) (*Task, error) {
 	if opts.Title != nil {
 		t.Title = *opts.Title
 	}
+	// An empty string clears an optional field.
 	if opts.Description != nil {
-		t.Description = opts.Description
+		t.Description = nonEmpty(opts.Description)
 	}
 	if opts.Priority != nil {
 		t.Priority = *opts.Priority
 	}
 	if opts.Assignee != nil {
-		t.Assignee = opts.Assignee
+		t.Assignee = nonEmpty(opts.Assignee)
 	}
 	if opts.DueDate != nil {
-		t.DueDate = DatePtr(opts.DueDate)
+		t.DueDate = DatePtr(nonEmpty(opts.DueDate))
 	}
 	if opts.ParentID != nil {
-		t.ParentID = opts.ParentID
+		t.ParentID = parent
 	}
 	t.UpdatedAt = now()
 
@@ -364,7 +381,19 @@ func Update(db *sqlx.DB, prefix string, opts UpdateOpts) (*Task, error) {
 	return t, err
 }
 
+// Save writes a whole task, as edited by tt edit or the web UI, after
+// validating it and resolving a parent prefix.
 func Save(db *sqlx.DB, t *Task) error {
+	if err := Validate(t); err != nil {
+		return err
+	}
+	if t.ParentID != nil {
+		p, err := resolveParent(db, *t.ParentID, t.ID)
+		if err != nil {
+			return err
+		}
+		t.ParentID = p
+	}
 	_, err := db.NamedExec(`UPDATE tasks SET
 		title=:title, status=:status, parent_id=:parent_id, description=:description,
 		priority=:priority, assignee=:assignee, due_date=:due_date,

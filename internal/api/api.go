@@ -234,7 +234,16 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		if s == "" {
 			t.ParentID = nil
 		} else {
-			t.ParentID = &s
+			p, err := st.Get(r.Context(), s)
+			if err != nil {
+				writeErr(w, 400, fmt.Sprintf("parent task %q not found", s))
+				return
+			}
+			if p.ID == t.ID {
+				writeErr(w, 400, "a task can't be its own parent")
+				return
+			}
+			t.ParentID = &p.ID
 		}
 	}
 	if v, ok := raw["due_date"]; ok {

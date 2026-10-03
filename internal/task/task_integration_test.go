@@ -682,3 +682,66 @@ func TestSubscribe_SQLiteSeesOtherProcessWrites(t *testing.T) {
 	for range events {
 	} // channel closes once ctx ends
 }
+
+// Empty values clear optional fields; a parent prefix is stored as the full
+// ID; a task can't be its own parent.
+func TestUpdate_ClearAndParentResolution(t *testing.T) {
+	d := openTestDB(t)
+	parent, _ := Create(d, "parent", CreateOpts{})
+	who, due, desc := "bot", "2026-05-01", "body"
+	child, err := Create(d, "child", CreateOpts{ParentID: &[]string{parent.ID[:4]}[0], Assignee: &who, DueDate: &due, Description: &desc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.ParentID == nil || *child.ParentID != parent.ID {
+		t.Errorf("Create stored parent %v, want full ID %s", child.ParentID, parent.ID)
+	}
+	empty := ""
+	got, err := Update(d, child.ID, UpdateOpts{Assignee: &empty, DueDate: &empty, Description: &empty, ParentID: &empty})
+	if err != nil {
+		t.Fatalf("clearing fields: %v", err)
+	}
+	if got.Assignee != nil || got.DueDate != nil || got.Description != nil || got.ParentID != nil {
+		t.Errorf("fields not cleared: %+v", got)
+	}
+	pre := parent.ID[:5]
+	if got, _ := Update(d, child.ID, UpdateOpts{ParentID: &pre}); got == nil || *got.ParentID != parent.ID {
+		t.Errorf("Update stored parent %v, want %s", got, parent.ID)
+	}
+	self := child.ID
+	if _, err := Update(d, child.ID, UpdateOpts{ParentID: &self}); err == nil {
+		t.Error("task became its own parent")
+	}
+}
+
+// Save (tt edit, the web UI) validates like Update and resolves the parent.
+func TestSave_Validates(t *testing.T) {
+	d := openTestDB(t)
+	parent, _ := Create(d, "parent", CreateOpts{})
+	tk, _ := Create(d, "task", CreateOpts{})
+	bad := *tk
+	bad.Status = "GARBAGE"
+	if err := Save(d, &bad); err == nil {
+		t.Error("Save accepted an invalid status")
+	}
+	bad = *tk
+	bad.Priority = 9
+	if err := Save(d, &bad); err == nil {
+		t.Error("Save accepted an invalid priority")
+	}
+	bad = *tk
+	missing := "zzzzzzz"
+	bad.ParentID = &missing
+	if err := Save(d, &bad); err == nil {
+		t.Error("Save accepted a missing parent")
+	}
+	ok := *tk
+	pre := parent.ID[:4]
+	ok.ParentID = &pre
+	if err := Save(d, &ok); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := Get(d, tk.ID); got.ParentID == nil || *got.ParentID != parent.ID {
+		t.Errorf("Save stored parent %v, want %s", got.ParentID, parent.ID)
+	}
+}
