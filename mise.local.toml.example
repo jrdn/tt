@@ -1,0 +1,13 @@
+# Copy to mise.local.toml (gitignored) for `mise run server`.
+[env]
+# GitHub OAuth app with callback http://localhost:8080/auth/github/callback
+TT_GITHUB_CLIENT_ID = ""
+TT_GITHUB_CLIENT_SECRET = ""
+# GitHub logins made server admins at sign-in (comma-separated)
+TT_ADMINS = ""
+
+# Optional; these are the defaults:
+# TT_DATABASE_URL = "postgres://postgres:tt@localhost:55432/tt?sslmode=disable"
+# TT_BASE_URL = "http://localhost:8080"
+# TT_ADDR = ":8080"
+# TT_MASTER_KEY: read from ~/.tt-master-key (created on first run) unless set

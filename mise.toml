@@ -1,0 +1,63 @@
+[tools]
+go = "1.25"
+
+[tasks.build]
+description = "Build the tt binary"
+run = "go build -o tt ./cmd/tt"
+
+[tasks.test]
+description = "Run unit tests"
+run = "go test ./..."
+
+[tasks."test:integ"]
+description = "Run integration tests (requires real SQLite)"
+run = "go test -tags integration ./..."
+
+[tasks."test:all"]
+description = "Run unit and integration tests"
+run = "go test -tags integration ./..."
+
+[tasks."pg:up"]
+description = "Start a throwaway Postgres 17 in Docker on port 55432"
+run = [
+  "docker run -d --rm --name tt-pg -e POSTGRES_PASSWORD=tt -e POSTGRES_DB=tt_test -p 55432:5432 postgres:17",
+  "until docker exec tt-pg pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; do sleep 0.5; done",
+]
+
+[tasks."pg:down"]
+description = "Stop the test Postgres container"
+run = "docker rm -f tt-pg"
+
+[tasks."test:pg"]
+description = "Run integration tests against Postgres (start it with mise run pg:up)"
+env = { TT_TEST_POSTGRES_URL = "postgres://postgres:tt@localhost:55432/tt_test?sslmode=disable" }
+run = "go test -tags integration -count=1 ./internal/task/... ./internal/server/... ./internal/client/..."
+
+[tasks."test:e2e"]
+description = "Run end-to-end tests with the real tt binary, local and against a tt server (start Postgres with mise run pg:up)"
+env = { TT_TEST_POSTGRES_URL = "postgres://postgres:tt@localhost:55432/tt_test?sslmode=disable" }
+run = "go test -tags e2e -count=1 ./e2e/..."
+
+[tasks.server]
+description = "Build and run a local tt server (settings in mise.local.toml [env]; starts Postgres if needed)"
+depends = ["build"]
+run = "./scripts/dev-server.sh"
+
+[tasks.run]
+description = "Run tt (pass args via -- e.g. mise run run -- ls)"
+run = "go run ./cmd/tt"
+
+[tasks.lint]
+description = "Run go vet"
+run = "go vet ./..."
+
+[tasks.install]
+description = "Install tt to ~/.local/bin and GOBIN"
+run = [
+  "go build -o tt ./cmd/tt",
+  "mkdir -p $HOME/.local/bin",
+  # Replace rather than overwrite: on macOS, overwriting a binary in place
+  # leaves a stale code signature and the next run is killed (exit 137).
+  "rm -f $HOME/.local/bin/tt",
+  "cp tt $HOME/.local/bin/tt",
+]
