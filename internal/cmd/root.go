@@ -80,6 +80,8 @@ func NewRoot(openDB func() (*sqlx.DB, error)) *cobra.Command {
 		newUpdateCmd(),
 		newCommentCmd(),
 		newRelateCmd(),
+		newLinkCmd(),
+		newWorktreeCmd(),
 		newInitCmd(),
 		newEditCmd(),
 		newSearchCmd(),

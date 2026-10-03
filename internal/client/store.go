@@ -26,10 +26,11 @@ func NewStore(c *Client, project string) *Store {
 }
 
 type taskDetail struct {
-	Task      *task.Task      `json:"task"`
-	Subtasks  []task.Task     `json:"subtasks"`
-	Relations []task.Relation `json:"relations"`
-	Comments  []task.Comment  `json:"comments"`
+	Task      *task.Task         `json:"task"`
+	Subtasks  []task.Task        `json:"subtasks"`
+	Relations []task.Relation    `json:"relations"`
+	Comments  []task.Comment     `json:"comments"`
+	Refs      []task.ExternalRef `json:"external_refs"`
 }
 
 func (s *Store) detail(ctx context.Context, id string) (*taskDetail, error) {
@@ -202,6 +203,14 @@ func (s *Store) FindByExternalRef(ctx context.Context, source, externalID string
 		return nil, err
 	}
 	return &t, nil
+}
+
+func (s *Store) GetExternalRefs(ctx context.Context, taskID string) ([]task.ExternalRef, error) {
+	d, err := s.detail(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	return d.Refs, nil
 }
 
 func (s *Store) Close() error { return nil }

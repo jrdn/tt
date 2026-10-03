@@ -29,6 +29,7 @@ type Store interface {
 
 	UpsertExternalRef(ctx context.Context, taskID, source, externalID string, url *string) error
 	FindByExternalRef(ctx context.Context, source, externalID string) (*Task, error)
+	GetExternalRefs(ctx context.Context, taskID string) ([]ExternalRef, error)
 
 	Close() error
 }
@@ -104,6 +105,10 @@ func (s *SQLStore) UpsertExternalRef(ctx context.Context, taskID, source, extern
 
 func (s *SQLStore) FindByExternalRef(ctx context.Context, source, externalID string) (*Task, error) {
 	return FindByExternalRef(s.db, source, externalID)
+}
+
+func (s *SQLStore) GetExternalRefs(ctx context.Context, taskID string) ([]ExternalRef, error) {
+	return GetExternalRefs(s.db, taskID)
 }
 
 func (s *SQLStore) Close() error {

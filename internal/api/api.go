@@ -100,6 +100,7 @@ type webTaskDetail struct {
 	Subtasks        []task.Task        `json:"subtasks"`
 	Relations       []task.Relation    `json:"relations"`
 	Comments        []webCommentDetail `json:"comments"`
+	ExternalRefs    []task.ExternalRef `json:"external_refs"`
 	DescriptionHTML string             `json:"description_html"`
 }
 
@@ -157,6 +158,10 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		rels = []task.Relation{}
 	}
 	rawComments, _ := st.GetComments(r.Context(), t.ID)
+	refs, _ := st.GetExternalRefs(r.Context(), t.ID)
+	if refs == nil {
+		refs = []task.ExternalRef{}
+	}
 
 	comments := make([]webCommentDetail, len(rawComments))
 	for i, c := range rawComments {
@@ -173,6 +178,7 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		Subtasks:        subtasks,
 		Relations:       rels,
 		Comments:        comments,
+		ExternalRefs:    refs,
 		DescriptionHTML: descHTML,
 	})
 }

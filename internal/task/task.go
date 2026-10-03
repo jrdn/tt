@@ -700,6 +700,6 @@ func FindByExternalRef(db *sqlx.DB, source, externalID string) (*Task, error) {
 
 func GetExternalRefs(db *sqlx.DB, taskID string) ([]ExternalRef, error) {
 	var refs []ExternalRef
-	err := db.Select(&refs, db.Rebind(`SELECT * FROM external_refs WHERE task_id = ?`), taskID)
+	err := db.Select(&refs, db.Rebind(`SELECT * FROM external_refs WHERE task_id = ? ORDER BY source, external_id`), taskID)
 	return refs, err
 }

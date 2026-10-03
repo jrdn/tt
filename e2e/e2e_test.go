@@ -452,6 +452,16 @@ func scenarioMore(t *testing.T, e *env, mode string) string {
 	step("unrelate", z, "blocks", y)
 	step("show", x, "--json")
 
+	// External refs: add, update the URL, re-point to another task, link by prefix.
+	step("link", x, "linear", "ENG-1", "https://linear.app/x/ENG-1", "--json")
+	step("link", x[:4], "github", "42")
+	step("link", x, "linear", "ENG-1", "https://linear.app/x/ENG-1-renamed")
+	step("show", x)
+	step("link", z, "github", "42", "--json")
+	step("show", z, "--json")
+	step("show", y, "--json") // no refs: an empty list
+	step("link", "zzzzzzz", "linear", "ENG-9")
+
 	// Comment JSON, and claim JSON.
 	step("comment", x, "with **markdown**", "--json")
 	step("claim", z, "--as", "erin", "--json")

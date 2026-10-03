@@ -383,6 +383,13 @@ func (s *authzStore) FindByExternalRef(ctx context.Context, source, externalID s
 	return s.inner.FindByExternalRef(ctx, source, externalID)
 }
 
+func (s *authzStore) GetExternalRefs(ctx context.Context, taskID string) ([]task.ExternalRef, error) {
+	if _, err := s.allow(ctx, auth.ActTaskRead); err != nil {
+		return nil, err
+	}
+	return s.inner.GetExternalRefs(ctx, taskID)
+}
+
 // Close is a no-op: the underlying pool is shared and owned by Directory.
 func (s *authzStore) Close() error { return nil }
 
