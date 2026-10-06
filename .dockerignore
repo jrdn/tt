@@ -1,0 +1,5 @@
+.git
+.github
+/tt
+*.db
+mise.local.toml
