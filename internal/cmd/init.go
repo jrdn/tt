@@ -64,6 +64,20 @@ Before ending a session on an in-progress task, always leave a comment summarizi
 
 <!-- end tt -->`
 
+// initServerProject resolves what `tt init` writes to .tt.json. Explicit
+// flags win; with neither given, TT_SERVER and TT_PROJECT are used only if
+// both are set, matching client.FindProject.
+func initServerProject(server, project string) (string, string) {
+	if server != "" || project != "" {
+		return server, project
+	}
+	srv, proj := os.Getenv("TT_SERVER"), os.Getenv("TT_PROJECT")
+	if srv == "" || proj == "" {
+		return "", ""
+	}
+	return srv, proj
+}
+
 func newInitCmd() *cobra.Command {
 	var filePath, server, project string
 
@@ -73,10 +87,12 @@ func newInitCmd() *cobra.Command {
 		Long: `Inject the tt reference section into AGENTS.md and/or CLAUDE.md.
 
 With --server and --project, also write .tt.json at the repo root so tt
-commands in this repo use that tt server project. Commit .tt.json so
-teammates share the setting; each then runs tt login.`,
+commands in this repo use that tt server project. Without either flag, the
+TT_SERVER and TT_PROJECT environment variables are used if both are set.
+Commit .tt.json so teammates share the setting; each then runs tt login.`,
 		Annotations: map[string]string{noLocalDB: "1"},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			server, project = initServerProject(server, project)
 			if (server == "") != (project == "") {
 				return fmt.Errorf("--server and --project must be given together")
 			}

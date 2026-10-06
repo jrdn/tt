@@ -92,3 +92,28 @@ func TestInjectSection_IdempotentContent(t *testing.T) {
 		t.Error("second injection should produce identical output")
 	}
 }
+
+func TestInitServerProject(t *testing.T) {
+	cases := []struct {
+		name              string
+		envSrv, envProj   string
+		flagSrv, flagProj string
+		wantSrv, wantProj string
+	}{
+		{"flags win over env", "https://env", "envp", "https://flag", "flagp", "https://flag", "flagp"},
+		{"env used when no flags", "https://env", "envp", "", "", "https://env", "envp"},
+		{"env needs both", "https://env", "", "", "", "", ""},
+		{"partial flag is left for the caller to reject", "https://env", "envp", "https://flag", "", "https://flag", ""},
+		{"nothing set", "", "", "", "", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("TT_SERVER", c.envSrv)
+			t.Setenv("TT_PROJECT", c.envProj)
+			srv, proj := initServerProject(c.flagSrv, c.flagProj)
+			if srv != c.wantSrv || proj != c.wantProj {
+				t.Errorf("got (%q, %q), want (%q, %q)", srv, proj, c.wantSrv, c.wantProj)
+			}
+		})
+	}
+}
