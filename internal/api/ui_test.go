@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/jrdn/tt/internal/api"
 	"github.com/jrdn/tt/internal/db"
@@ -134,5 +136,89 @@ func TestThemeToggleOverridesSystem(t *testing.T) {
 	}
 	if stored != nil {
 		t.Errorf("tt-theme = %v after returning to Auto, want unset", stored)
+	}
+}
+
+func TestDashboardShowsStatusCounts(t *testing.T) {
+	ctx, url := newBrowser(t)
+	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitVisible("#dash-btn")); err != nil {
+		t.Fatal(err)
+	}
+	var created bool
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title:'dash task', status:'in_progress'})}).then(r => r.ok)`, &created, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) })); err != nil || !created {
+		t.Fatalf("create task: %v %v", created, err)
+	}
+	var text string
+	if err := chromedp.Run(ctx,
+		chromedp.Click("#dash-btn", chromedp.ByID),
+		chromedp.Poll(`document.querySelector('.dash-card') !== null`, nil),
+		chromedp.Evaluate(`document.getElementById('dashboard').innerText`, &text),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "In Progress 1") {
+		t.Errorf("dashboard text = %q, want in-progress count", text)
+	}
+}
+
+// newServerModeBrowser serves the server-mode UI with two projects, "alpha"
+// and "beta", each with one task.
+func newServerModeBrowser(t *testing.T) (context.Context, string) {
+	t.Helper()
+	stores := map[string]task.Store{}
+	for _, slug := range []string{"alpha", "beta"} {
+		d, err := db.OpenPath(filepath.Join(t.TempDir(), slug+".db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { d.Close() })
+		st := task.NewSQLStore(d)
+		who := "bot-" + slug
+		if _, err := st.Create(context.Background(), slug+" task", task.CreateOpts{Assignee: &who}); err != nil {
+			t.Fatal(err)
+		}
+		stores[slug] = st
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", api.ServerIndex)
+	mux.HandleFunc("POST /api/v1/token", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"token":"x"}`)) })
+	mux.HandleFunc("GET /api/v1/projects", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"projects":[{"slug":"alpha","name":"Alpha"},{"slug":"beta","name":"Beta"}]}`))
+	})
+	(&api.Server{Resolve: func(r *http.Request) (task.Store, error) { return stores[r.PathValue("project")], nil }}).Register(mux, "/api/v1/projects/{project}")
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	ctx, _ := newBrowser(t)
+	return ctx, ts.URL
+}
+
+func TestProjectSwitcherIsStickyAndAllShowsProjects(t *testing.T) {
+	ctx, url := newServerModeBrowser(t)
+	var sel, list string
+	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.Poll(`document.querySelector('#project-select option') !== null`, nil),
+		chromedp.Evaluate(`switchProject('beta')`, nil), // reloads the page
+		chromedp.Sleep(500*time.Millisecond),
+		chromedp.Poll(`document.querySelector('.task-item') !== null`, nil),
+	); err != nil {
+		t.Fatal(err)
+	}
+	// A fresh visit without ?project= keeps the last choice.
+	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.Poll(`document.querySelector('.task-item') !== null`, nil),
+		chromedp.Value("#project-select", &sel, chromedp.ByID)); err != nil {
+		t.Fatal(err)
+	}
+	if sel != "beta" {
+		t.Errorf("project after revisit = %q, want beta", sel)
+	}
+
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`switchProject('all')`, nil), chromedp.Sleep(500*time.Millisecond), chromedp.Poll(`document.querySelector('.project-chip') !== null`, nil),
+		chromedp.Evaluate(`document.getElementById('task-list').innerText`, &list)); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"alpha task", "beta task", "Alpha", "Beta", "@bot-alpha", "@bot-beta"} {
+		if !strings.Contains(list, want) {
+			t.Errorf("all-projects list missing %q: %q", want, list)
+		}
 	}
 }

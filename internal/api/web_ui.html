@@ -132,6 +132,24 @@ header h1 {
   overflow: hidden;
 }
 
+/* ── Dashboard ── */
+.dashboard { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 20px; background: var(--bg-muted); }
+body.show-dashboard .dashboard { display: block; }
+body.show-dashboard .layout { display: none; }
+.dash-totals { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+.dash-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; min-width: 110px; }
+.dash-stat b { display: block; font-size: 22px; color: var(--text); }
+.dash-stat span { font-size: 12px; color: var(--text-dim); }
+.dash-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.dash-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; cursor: pointer; }
+.dash-card:hover { border-color: #4f46e5; }
+.dash-card h3 { font-size: 14px; color: var(--text); margin-bottom: 10px; display: flex; justify-content: space-between; gap: 8px; }
+.dash-card h3 small { font-weight: 400; color: var(--text-dim); font-size: 12px; }
+.dash-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--bg-muted); margin-bottom: 10px; }
+.dash-counts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.dash-sub { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+.dash-sub.warn { color: #ef4444; }
+
 /* ── Sidebar ── */
 aside {
   width: 290px;
@@ -218,6 +236,7 @@ aside {
   color: #fff;
 }
 .pri { font-size: 11px; font-weight: 700; }
+.project-chip { font-size: 10px; color: #4f46e5; border: 1px solid #4f46e5; border-radius: 8px; padding: 0 6px; }
 .id-chip { font-family: monospace; font-size: 10px; color: var(--text-faint2); }
 .parent-ref { font-family: monospace; font-size: 10px; color: var(--text-faint); }
 
@@ -767,6 +786,7 @@ main {
   <h1>tt</h1>
   <select id="project-select" onchange="switchProject(this.value)" style="display:none"></select>
   <button class="btn btn-ghost" onclick="openNewTask()" style="font-size:12px;padding:5px 12px">+ New</button>
+  <button class="recent-btn" id="dash-btn" onclick="toggleDashboard()">Dashboard</button>
   <button class="recent-btn" id="recent-btn" onclick="toggleRecent()">Recent</button>
   <button class="recent-btn" id="theme-btn" onclick="cycleTheme()" title="Theme: follows system unless overridden"></button>
 </header>
@@ -781,6 +801,10 @@ main {
       <div class="form-field" id="nt-parent-row" style="display:none">
         <label class="form-label">Parent Task</label>
         <div class="parent-info" id="nt-parent-id"></div>
+      </div>
+      <div class="form-field" id="nt-project-row" style="display:none">
+        <label class="form-label">Project</label>
+        <select class="form-select" id="nt-project"></select>
       </div>
       <div class="form-field">
         <label class="form-label">Title<span class="req">*</span></label>
@@ -826,6 +850,7 @@ main {
   <div class="recent-popup-header">Recent updates</div>
   <div id="recent-list"></div>
 </div>
+<div class="dashboard" id="dashboard"></div>
 <div class="layout">
   <aside>
     <div class="filter-strip" id="filter-strip"></div>
@@ -873,38 +898,72 @@ async function refreshToken() {
   authToken = (await res.json()).token;
 }
 
-// On tt server, pick the project from ?project= or the first one available.
+// On tt server, pick the project from ?project=, else the last one used
+// (remembered in localStorage), else the first available. "all" shows every
+// project at once; task calls then go to each task's own project.
+const ALL_PROJECTS = 'all';
+let PROJECTS = [];
+let ALL = false;
+let selectedProject = null;
+
+function projBase(slug) { return '/api/v1/projects/' + encodeURIComponent(slug); }
+function projName(slug) {
+  const p = PROJECTS.find(p => p.slug === slug);
+  return p ? p.name : slug;
+}
+
 async function setupProject() {
   if (!TT_SERVER) return true;
   const res = await apiFetch('/api/v1/projects');
-  const projects = (await res.json()).projects || [];
-  if (projects.length === 0) {
+  PROJECTS = (await res.json()).projects || [];
+  if (PROJECTS.length === 0) {
     document.body.innerHTML = '<p style="padding:2em">You are not a member of any tt project yet.</p>';
     return false;
   }
+  let stored = null;
+  try { stored = localStorage.getItem('tt-project'); } catch (_) {}
+  const valid = v => v && (v === ALL_PROJECTS && PROJECTS.length > 1 || PROJECTS.some(p => p.slug === v));
   const want = new URLSearchParams(location.search).get('project');
-  const slug = projects.some(p => p.slug === want) ? want : projects[0].slug;
-  API = '/api/v1/projects/' + encodeURIComponent(slug);
+  const choice = valid(want) ? want : valid(stored) ? stored : PROJECTS[0].slug;
+  ALL = choice === ALL_PROJECTS;
+  if (!ALL) API = projBase(choice);
   const sel = document.getElementById('project-select');
-  sel.innerHTML = projects.map(p =>
-    `<option value="${esc(p.slug)}"${p.slug === slug ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
-  sel.style.display = projects.length > 1 ? '' : 'none';
+  sel.innerHTML = (PROJECTS.length > 1 ? `<option value="${ALL_PROJECTS}"${ALL ? ' selected' : ''}>All projects</option>` : '') +
+    PROJECTS.map(p =>
+      `<option value="${esc(p.slug)}"${p.slug === choice ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
+  sel.style.display = PROJECTS.length > 1 ? '' : 'none';
   return true;
 }
 
 function switchProject(slug) {
+  try { localStorage.setItem('tt-project', slug); } catch (_) {}
   location.search = '?project=' + encodeURIComponent(slug);
+}
+
+// fetchTasks lists tasks from path (e.g. '/tasks' + query). In all-projects
+// mode it queries every project and tags each task with its project slug.
+async function fetchTasks(path) {
+  if (!ALL) {
+    const res = await apiFetch(API + path);
+    return (await res.json()).tasks || [];
+  }
+  const parts = await Promise.all(PROJECTS.map(async p => {
+    const res = await apiFetch(projBase(p.slug) + path);
+    if (!res.ok) return [];
+    return ((await res.json()).tasks || []).map(t => Object.assign(t, {_project: p.slug}));
+  }));
+  return parts.flat();
 }
 
 // ── Live refresh ───────────────────────────────────────────
 // Streams change events (tt server, or a local database edited by other
 // processes) and refreshes the list and open task. fetch is used instead of
 // EventSource so the bearer token can be sent.
-async function startLive() {
+async function startLive(base) {
   let delay = 1000;
   for (;;) {
     try {
-      const res = await apiFetch(API + '/events');
+      const res = await apiFetch(base + '/events');
       if (res.status === 501) return; // this backend has no live updates
       if (!res.ok || !res.body) throw new Error('events: ' + res.status);
       delay = 1000;
@@ -949,6 +1008,7 @@ function liveRefresh() {
   }
   refreshList();
   if (selectedId) loadTask(selectedId);
+  if (dashOpen) loadDashboard();
 }
 
 const THEME_LABELS = { auto: '◐ Auto', light: '☀ Light', dark: '☾ Dark' };
@@ -1056,9 +1116,7 @@ function clearSearch() {
 
 async function loadSearch(q) {
   try {
-    const res  = await apiFetch(API + '/search?q=' + encodeURIComponent(q));
-    const data = await res.json();
-    renderTaskList(data.tasks || []);
+    renderTaskList(await fetchTasks('/search?q=' + encodeURIComponent(q)));
   } catch (_) {
     document.getElementById('task-list').innerHTML =
       '<li style="padding:12px;color:#ef4444;font-size:12px">Search failed</li>';
@@ -1085,14 +1143,12 @@ function setFilter(v) {
 
 // ── Task list ──────────────────────────────────────────────
 async function loadTasks() {
-  let url = API + '/tasks';
+  let url = '/tasks';
   if (currentFilter === '__all__') url += '?all=1';
   else if (currentFilter !== '')   url += '?status=' + encodeURIComponent(currentFilter);
 
   try {
-    const res  = await apiFetch(url);
-    const data = await res.json();
-    renderTaskList(data.tasks || []);
+    renderTaskList(await fetchTasks(url));
   } catch (_) {
     document.getElementById('task-list').innerHTML =
       '<li style="padding:12px;color:#ef4444;font-size:12px">Failed to load tasks</li>';
@@ -1107,19 +1163,97 @@ function renderTaskList(tasks) {
   }
   ul.innerHTML = tasks.map(t => {
     const parentRef  = t.parent_id ? `<span class="parent-ref">↳ ${esc(t.parent_id)}</span>` : '';
-    const assigneeEl = t.assignee  ? `<span style="font-size:10px;color:#9ca3af">@${esc(t.assignee)}</span>` : '';
+    const assigneeEl = t.assignee  ? `<span style="font-size:11px;color:var(--text-dim)">@${esc(t.assignee)}</span>` : '';
+    const projectEl  = ALL && t._project ? `<span class="project-chip">${esc(projName(t._project))}</span>` : '';
+    const proj       = ALL ? t._project || '' : '';
+    const active     = t.id === selectedId && (!ALL || t._project === selectedProject);
     return `
-      <li class="task-item${t.id === selectedId ? ' active' : ''}" onclick="selectTask('${esc(t.id)}')">
+      <li class="task-item${active ? ' active' : ''}" data-project="${esc(proj)}" onclick="selectTask('${esc(t.id)}', '${esc(proj)}')">
         <div class="task-item-title">${esc(t.title)}</div>
         <div class="task-item-meta">
           ${priSpan(t.priority)}
           ${badge(t.status)}
           ${assigneeEl}
+          ${projectEl}
           ${parentRef}
           <span class="id-chip">${esc(t.id)}</span>
         </div>
       </li>`;
   }).join('');
+}
+
+// ── Dashboard ──────────────────────────────────────────────
+// Overview of every project the user can reach. Tasks are fetched per
+// project and aggregated here.
+let dashOpen = false;
+
+function toggleDashboard(force) {
+  dashOpen = force === undefined ? !dashOpen : force;
+  document.body.classList.toggle('show-dashboard', dashOpen);
+  document.getElementById('dash-btn').classList.toggle('active', dashOpen);
+  if (dashOpen) loadDashboard();
+}
+
+async function loadDashboard() {
+  const el = document.getElementById('dashboard');
+  if (!el.innerHTML) el.innerHTML = '<div class="empty-state">Loading…</div>';
+  try {
+    let projects = [{slug: null, name: 'Tasks', base: API}];
+    if (TT_SERVER) {
+      const res = await apiFetch('/api/v1/projects');
+      projects = ((await res.json()).projects || []).map(p =>
+        ({slug: p.slug, name: p.name, base: '/api/v1/projects/' + encodeURIComponent(p.slug)}));
+    }
+    const results = await Promise.all(projects.map(async p => {
+      try {
+        const res = await apiFetch(p.base + '/tasks?all=1');
+        if (!res.ok) throw new Error(res.status);
+        return {p, tasks: (await res.json()).tasks || []};
+      } catch (_) { return {p, tasks: null}; }
+    }));
+    if (dashOpen) renderDashboard(results);
+  } catch (_) {
+    el.innerHTML = '<div class="empty-state" style="color:#ef4444">Failed to load dashboard</div>';
+  }
+}
+
+function renderDashboard(results) {
+  const today = new Date().toISOString().slice(0, 10);
+  const total = {};
+  let overdue = 0, active = 0;
+  const cards = results.map(({p, tasks}) => {
+    if (!tasks) {
+      return `<div class="dash-card"><h3>${esc(p.name)}</h3><div class="dash-sub warn">Failed to load</div></div>`;
+    }
+    const counts = {};
+    let od = 0;
+    for (const t of tasks) {
+      counts[t.status] = (counts[t.status] || 0) + 1;
+      total[t.status] = (total[t.status] || 0) + 1;
+      if (t.due_date && t.due_date < today && t.status !== 'done' && t.status !== 'cancelled') od++;
+    }
+    overdue += od;
+    const open = tasks.length - (counts.done || 0) - (counts.cancelled || 0);
+    active += open;
+    const bar = ALL_STATUSES.filter(s => counts[s]).map(s =>
+      `<div style="flex:${counts[s]};background:${STATUS_COLORS[s]}" title="${esc(STATUS_LABELS[s])}: ${counts[s]}"></div>`).join('');
+    const chips = ALL_STATUSES.filter(s => counts[s]).map(s =>
+      `<span class="badge" style="background:${STATUS_COLORS[s]}">${esc(STATUS_LABELS[s])} ${counts[s]}</span>`).join('');
+    const click = p.slug ? ` onclick="switchProject('${esc(p.slug)}')"` : ' onclick="toggleDashboard(false)"';
+    return `<div class="dash-card"${click}>
+      <h3>${esc(p.name)}<small>${open} active / ${tasks.length}</small></h3>
+      <div class="dash-bar">${bar}</div>
+      <div class="dash-counts">${chips || '<span class="dash-sub">No tasks</span>'}</div>
+      ${od ? `<div class="dash-sub warn">${od} overdue</div>` : ''}
+    </div>`;
+  });
+  const stat = (n, label) => `<div class="dash-stat"><b>${n}</b><span>${label}</span></div>`;
+  const totals = stat(results.length, results.length === 1 ? 'project' : 'projects') +
+    stat(active, 'active') +
+    ['in_progress', 'in_review', 'ready'].map(s => stat(total[s] || 0, STATUS_LABELS[s].toLowerCase())).join('') +
+    stat(overdue, 'overdue');
+  document.getElementById('dashboard').innerHTML =
+    `<div class="dash-totals">${totals}</div><div class="dash-grid">${cards.join('')}</div>`;
 }
 
 // ── Mobile panel switching ─────────────────────────────────
@@ -1141,11 +1275,16 @@ function goBackToList() {
 }
 
 // ── Task detail ────────────────────────────────────────────
-async function selectTask(id) {
+async function selectTask(id, project) {
   selectedId = id;
+  if (ALL && project) {
+    selectedProject = project;
+    API = projBase(project); // task calls below go to this task's project
+  }
   document.querySelectorAll('.task-item').forEach(el => {
     const chip = el.querySelector('.id-chip');
-    el.classList.toggle('active', chip && chip.textContent.trim() === id);
+    el.classList.toggle('active', chip && chip.textContent.trim() === id &&
+      (!ALL || el.dataset.project === selectedProject));
   });
   showDetailPanel();
   await loadTask(id);
@@ -1596,10 +1735,10 @@ async function loadRecent() {
   const list = document.getElementById('recent-list');
   list.innerHTML = '<div style="padding:10px 14px;font-size:12px;color:#9ca3af">Loading…</div>';
   try {
-    const res  = await apiFetch(API + '/tasks/recent');
-    const data = await res.json();
-    list.innerHTML = (data.tasks || []).map(t => `
-      <div class="recent-row" onclick="closeRecent(); selectTask('${esc(t.id)}')">
+    let tasks = await fetchTasks('/tasks/recent');
+    if (ALL) tasks = tasks.sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 20);
+    list.innerHTML = tasks.map(t => `
+      <div class="recent-row" onclick="closeRecent(); selectTask('${esc(t.id)}', '${ALL ? esc(t._project) : ''}')">
         <span class="badge" style="background:${STATUS_COLORS[t.status]||'#9ca3af'};flex-shrink:0">${esc(STATUS_LABELS[t.status]||t.status)}</span>
         <span class="recent-row-title">${esc(t.title)}</span>
         <span class="recent-row-time">${timeAgo(t.updated_at)}</span>
@@ -1639,6 +1778,15 @@ function openNewTask(parentId) {
   document.getElementById('nt-desc').value = '';
   document.getElementById('nt-priority').value = '2';
   document.getElementById('nt-status').value = 'open';
+
+  // Subtasks go in the open task's project; otherwise all-projects mode asks.
+  const projRow = document.getElementById('nt-project-row');
+  projRow.style.display = ALL && !newTaskParentId ? '' : 'none';
+  if (ALL && !newTaskParentId) {
+    const projSel = document.getElementById('nt-project');
+    projSel.innerHTML = PROJECTS.map(p => `<option value="${esc(p.slug)}">${esc(p.name)}</option>`).join('');
+    projSel.value = selectedProject || PROJECTS[0].slug;
+  }
 
   const titleEl  = document.getElementById('modal-title-text');
   const parentRow = document.getElementById('nt-parent-row');
@@ -1685,7 +1833,8 @@ async function submitNewTask() {
     if (assignee)       payload.assignee    = assignee;
     if (newTaskParentId) payload.parent_id  = newTaskParentId;
 
-    const res = await apiFetch(API + '/tasks', {
+    const newProject = ALL && !newTaskParentId ? document.getElementById('nt-project').value : null;
+    const res = await apiFetch((newProject ? projBase(newProject) : API) + '/tasks', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload),
@@ -1701,7 +1850,7 @@ async function submitNewTask() {
     } else {
       clearSearch();
       await loadTasks();
-      await selectTask(t.id);
+      await selectTask(t.id, newProject);
     }
   } catch (err) {
     alert('Failed to create task: ' + err.message);
@@ -1714,6 +1863,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closeNewTask();
     closeRecent();
+    if (dashOpen) toggleDashboard(false);
   }
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
     e.preventDefault();
@@ -1726,7 +1876,8 @@ setupProject().then(ok => {
   if (!ok) return;
   renderFilters();
   loadTasks();
-  startLive();
+  if (ALL) PROJECTS.forEach(p => startLive(projBase(p.slug)));
+  else startLive(API);
 });
 </script>
 </body>
