@@ -182,6 +182,9 @@ func newServerModeBrowser(t *testing.T) (context.Context, string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", api.ServerIndex)
 	mux.HandleFunc("POST /api/v1/token", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"token":"x"}`)) })
+	mux.HandleFunc("GET /api/v1/whoami", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"handle":"jrdn"}`))
+	})
 	mux.HandleFunc("GET /api/v1/projects", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"projects":[{"slug":"alpha","name":"Alpha"},{"slug":"beta","name":"Beta"}]}`))
 	})
@@ -220,5 +223,64 @@ func TestProjectSwitcherIsStickyAndAllShowsProjects(t *testing.T) {
 		if !strings.Contains(list, want) {
 			t.Errorf("all-projects list missing %q: %q", want, list)
 		}
+	}
+}
+
+// TestServerModeCommentBoxShowsLoggedInUser verifies that on tt server the
+// add-comment box credits the logged-in handle and doesn't ask for an author.
+func TestServerModeCommentBoxShowsLoggedInUser(t *testing.T) {
+	ctx, url := newServerModeBrowser(t)
+	var footer string
+	var noInput bool
+	// Clicks go through Evaluate: the live-refresh stream re-renders the
+	// task list, which invalidates the DOM nodes chromedp.Click waits on.
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url),
+		chromedp.Poll(`document.querySelector('.task-item') !== null`, nil),
+		chromedp.Evaluate(`document.querySelector('.task-item').click()`, nil),
+		// hydrateCommentIdentity swaps in the handle once whoami answers.
+		chromedp.Poll(`document.querySelector('.author-name') !== null`, nil),
+		chromedp.Evaluate(`document.querySelector('.add-comment-footer').innerText`, &footer),
+		chromedp.Evaluate(`document.getElementById('comment-author') === null`, &noInput),
+		// Submitting through the real UI must still work without the input.
+		chromedp.Evaluate(`document.getElementById('comment-body').value = 'hi'; document.querySelector('.add-comment-footer .btn-primary').click()`, nil),
+		chromedp.Poll(`document.querySelector('.comment-card') !== null`, nil),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(footer, "jrdn") {
+		t.Errorf("comment footer = %q, want the logged-in handle jrdn", footer)
+	}
+	if !noInput {
+		t.Errorf("author input shown in server mode, want hidden")
+	}
+}
+
+// TestLocalModeCommentBoxStillAsks checks local tt web keeps the author field.
+func TestLocalModeCommentBoxStillAsks(t *testing.T) {
+	ctx, url := newBrowser(t)
+	var footer string
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url),
+		chromedp.WaitVisible("#task-list"),
+		chromedp.Evaluate(`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title:'c task'})}).then(r => r.ok)`, nil,
+			func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
+		chromedp.Evaluate(`loadTasks()`, nil),
+		chromedp.Poll(`document.querySelector('.task-item') !== null`, nil),
+		chromedp.Evaluate(`document.querySelector('.task-item').click()`, nil),
+		chromedp.Poll(`document.querySelector('#comment-body') !== null`, nil),
+		chromedp.Evaluate(`document.querySelector('.add-comment-footer').innerText`, &footer),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(footer, "Author:") {
+		t.Errorf("local-mode comment footer = %q, want an Author prompt", footer)
+	}
+	var hasInput bool
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`document.getElementById('comment-author') !== null`, &hasInput)); err != nil {
+		t.Fatal(err)
+	}
+	if !hasInput {
+		t.Errorf("local-mode author input missing, want it present")
 	}
 }
