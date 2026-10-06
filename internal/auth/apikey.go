@@ -29,6 +29,12 @@ type Restrictions struct {
 	Label    string    // sub-agent label; nested attenuations join with "/"
 }
 
+// IsZero reports whether r carries no limits at all.
+func (r Restrictions) IsZero() bool {
+	return r.Projects == nil && r.MaxRole == "" && r.Tasks == nil && r.Actions == nil &&
+		r.Expires.IsZero() && r.Label == ""
+}
+
 // rootKey derives an API key's macaroon root secret from the master secret,
 // so no per-key secret is stored.
 func rootKey(master []byte, keyID string) []byte {

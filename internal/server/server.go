@@ -353,7 +353,7 @@ func (s *Server) memberRequest(w http.ResponseWriter, r *http.Request) (*Project
 // key) to manage agents and keys.
 func (s *Server) requireUser(w http.ResponseWriter, r *http.Request) (*Principal, bool) {
 	c, p, err := s.caller(r)
-	if err == nil && (c.Kind != auth.KindUser || c.Label != "" || c.Actions != nil || c.TaskScope != nil) {
+	if err == nil && (c.Kind != auth.KindUser || c.Restricted) {
 		err = fmt.Errorf("%w: only users can manage agents and keys", api.ErrForbidden)
 	}
 	if err != nil {

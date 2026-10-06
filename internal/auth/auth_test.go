@@ -211,3 +211,68 @@ func TestClaims_Can(t *testing.T) {
 		t.Error("listed action should be allowed")
 	}
 }
+
+// A comma in an attenuation value is split on verify, but still intersected
+// with the parent's limits, so it can't widen them.
+func TestKey_CommaInValueCannotWiden(t *testing.T) {
+	root, _ := MintKey(master, "k")
+	a, _ := Attenuate(root, Restrictions{Projects: []string{"a"}})
+	b, err := Attenuate(a, Restrictions{Projects: []string{"a,b"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, r, err := VerifyKey(master, b, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(r.Projects, []string{"a"}) {
+		t.Errorf("projects = %v, want [a]", r.Projects)
+	}
+}
+
+// Several task roots all apply: a write must fall under every one.
+func TestKey_MultipleTaskRootsAccumulate(t *testing.T) {
+	root, _ := MintKey(master, "k")
+	a, _ := Attenuate(root, Restrictions{Tasks: []string{"aaaaaaa"}})
+	b, _ := Attenuate(a, Restrictions{Tasks: []string{"bbbbbbb", "ccccccc"}})
+	_, r, err := VerifyKey(master, b, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(r.Tasks, []string{"aaaaaaa", "bbbbbbb", "ccccccc"}) {
+		t.Errorf("tasks = %v", r.Tasks)
+	}
+}
+
+func TestKey_FailsClosed(t *testing.T) {
+	root, _ := MintKey(master, "k")
+
+	// An explicitly empty action list must not read as "no limit".
+	empty, err := Attenuate(root, Restrictions{Actions: []Action{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := VerifyKey(master, empty, time.Now()); err == nil {
+		t.Error("empty action list: expected VerifyKey to fail")
+	}
+
+	// A caveat this version doesn't know must reject the key, not be ignored.
+	m, err := decodeKey(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AddFirstPartyCaveat([]byte("region = eu")); err != nil {
+		t.Fatal(err)
+	}
+	unknown, err := encodeKey(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := VerifyKey(master, unknown, time.Now()); err == nil {
+		t.Error("unknown caveat: expected VerifyKey to fail")
+	}
+
+	if _, err := Attenuate(root, Restrictions{}); err == nil {
+		t.Error("no restrictions: expected Attenuate to fail")
+	}
+}

@@ -493,9 +493,10 @@ func (d *Directory) ClaimsForKey(ctx context.Context, key string, now time.Time)
 	if err != nil {
 		return nil, notAfter, err
 	}
-	// Server-admin rights survive only on a user's own unrestricted key.
-	if restr.Projects != nil || restr.MaxRole != "" || restr.Tasks != nil || restr.Actions != nil || restr.Label != "" ||
-		k.ProjectScopes != nil || k.MaxRole != nil {
+	// Restricted keys can't manage keys or agents, and lose server-admin
+	// rights: only a user's own unrestricted key keeps them.
+	c.Restricted = !restr.IsZero() || k.ProjectScopes != nil || k.MaxRole != nil
+	if c.Restricted {
 		c.Admin = false
 	}
 

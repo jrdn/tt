@@ -689,3 +689,131 @@ func TestServer_GitHubLinking(t *testing.T) {
 		t.Error("linked GitHub to an agent")
 	}
 }
+
+// Attenuated keys are enforced by the server: role cap, expiry, task scope
+// across every write path, and loss of admin rights.
+func TestServer_AttenuatedKeys(t *testing.T) {
+	srv, hs := newTestServer(t)
+	ctx := context.Background()
+	dir := srv.Directory()
+	anon := &client{t: t, base: hs.URL}
+
+	alice, _ := dir.CreateUser(ctx, "alice", nil, true)
+	_, aliceKey, _ := dir.CreateKey(ctx, alice, alice, "", nil, "", time.Time{})
+	aRaw := anon.as(aliceKey)
+	aRaw.must(201, "POST", "/api/v1/projects", map[string]string{"slug": "tt", "name": "tt"})
+	aRaw.must(201, "POST", "/api/v1/agents", map[string]string{"handle": "claude/opus4.7"})
+	agentKey := aRaw.must(201, "POST", "/api/v1/keys", map[string]any{"agent": "claude/opus4.7"})["key"].(string)
+	ag := anon.as(agentKey)
+
+	const tasks = "/api/v1/projects/tt/tasks"
+	mk := func(title, parent string) string {
+		body := map[string]any{"title": title}
+		if parent != "" {
+			body["parent_id"] = parent
+		}
+		return ag.must(201, "POST", tasks, body)["id"].(string)
+	}
+	parent := mk("parent", "")
+	child := mk("child", parent)
+	grandchild := mk("grandchild", child)
+	sibling := mk("sibling", parent)
+	other := mk("other", "")
+
+	attenuate := func(r auth.Restrictions) *client {
+		k, err := auth.Attenuate(agentKey, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return anon.as(k)
+	}
+
+	// A viewer cap blocks writes the agent's member role would allow.
+	viewer := attenuate(auth.Restrictions{MaxRole: auth.RoleViewer})
+	viewer.must(200, "GET", tasks+"/"+other, nil)
+	viewer.must(403, "POST", tasks, map[string]string{"title": "nope"})
+	viewer.must(403, "PATCH", tasks+"/"+other, map[string]string{"status": "done"})
+
+	// Expiry: an expired key is refused, and a live one caps its JWT's lifetime.
+	attenuate(auth.Restrictions{Expires: time.Now().Add(-time.Minute)}).must(401, "GET", "/api/v1/whoami", nil)
+	exp := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	short := attenuate(auth.Restrictions{Expires: exp})
+	tok := short.must(200, "POST", "/api/v1/token", nil)
+	at, err := time.Parse(time.RFC3339, tok["expires_at"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if at.After(exp) {
+		t.Errorf("token expires_at = %v, want no later than key expiry %v", at, exp)
+	}
+
+	// Several task roots: a write must fall under every one of them.
+	multi := attenuate(auth.Restrictions{Tasks: []string{parent, child}})
+	multi.must(200, "PATCH", tasks+"/"+grandchild, map[string]string{"status": "in_progress"})
+	multi.must(200, "PATCH", tasks+"/"+child, map[string]string{"status": "in_progress"})
+	multi.must(403, "PATCH", tasks+"/"+sibling, map[string]string{"status": "in_progress"})
+	multi.must(201, "POST", tasks, map[string]any{"title": "new", "parent_id": grandchild})
+	multi.must(403, "POST", tasks, map[string]any{"title": "new", "parent_id": sibling})
+
+	scoped := attenuate(auth.Restrictions{Tasks: []string{parent}})
+
+	// Moving a task out of scope, by reparenting it, is refused.
+	scoped.must(403, "PATCH", tasks+"/"+child, map[string]any{"parent_id": other})
+
+	// Relations need both ends in scope.
+	scoped.must(403, "POST", tasks+"/"+child+"/relations", map[string]string{"type": "related", "target_id": other})
+	scoped.must(403, "POST", tasks+"/"+other+"/relations", map[string]string{"type": "related", "target_id": child})
+	if code, out := scoped.do("POST", tasks+"/"+child+"/relations", map[string]string{"type": "related", "target_id": sibling}); code >= 300 {
+		t.Errorf("relation between in-scope tasks = %d: %v", code, out)
+	}
+	scoped.must(403, "DELETE", tasks+"/"+child+"/relations/related/"+other, nil)
+
+	// Scoped keys can't pull "next" from the whole project.
+	scoped.must(403, "POST", "/api/v1/projects/tt/next", map[string]string{"handle": "claude/opus4.7"})
+
+	// Without task:read there's no event stream.
+	commentOnly := attenuate(auth.Restrictions{Actions: []auth.Action{auth.ActCommentCreate}})
+	commentOnly.must(403, "GET", "/api/v1/projects/tt/events", nil)
+	commentOnly.must(403, "GET", tasks, nil)
+
+	// A user's own admin rights don't survive attenuation.
+	narrowed, err := auth.Attenuate(aliceKey, auth.Restrictions{Label: "helper"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	anon.as(narrowed).must(403, "POST", "/api/v1/projects", map[string]string{"slug": "two"})
+	aRaw.must(201, "POST", "/api/v1/projects", map[string]string{"slug": "two"})
+}
+
+// A key narrowed only by project, role or expiry must not be able to mint a
+// fresh unrestricted key and shed those limits.
+func TestServer_AttenuatedKeyCannotMintKeys(t *testing.T) {
+	srv, hs := newTestServer(t)
+	ctx := context.Background()
+	anon := &client{t: t, base: hs.URL}
+
+	alice, _ := srv.Directory().CreateUser(ctx, "alice", nil, true)
+	_, aliceKey, _ := srv.Directory().CreateKey(ctx, alice, alice, "", nil, "", time.Time{})
+	anon.as(aliceKey).must(201, "POST", "/api/v1/projects", map[string]string{"slug": "tt", "name": "tt"})
+
+	cases := map[string]auth.Restrictions{
+		"project": {Projects: []string{"tt"}},
+		"role":    {MaxRole: auth.RoleViewer},
+		"expires": {Expires: time.Now().Add(time.Hour)},
+	}
+	for name, r := range cases {
+		narrowed, err := auth.Attenuate(aliceKey, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := anon.as(narrowed)
+		c.must(403, "POST", "/api/v1/keys", map[string]any{})
+		c.must(403, "POST", "/api/v1/agents", map[string]string{"handle": "sneaky-" + name})
+	}
+
+	// Limits stored on the key record count too, not just caveats.
+	_, scopedKey, _ := srv.Directory().CreateKey(ctx, alice, alice, "", []string{"tt"}, "", time.Time{})
+	anon.as(scopedKey).must(403, "POST", "/api/v1/keys", map[string]any{})
+	_, cappedKey, _ := srv.Directory().CreateKey(ctx, alice, alice, "", nil, auth.RoleViewer, time.Time{})
+	anon.as(cappedKey).must(403, "POST", "/api/v1/keys", map[string]any{})
+}

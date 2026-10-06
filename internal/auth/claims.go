@@ -105,6 +105,10 @@ type Claims struct {
 	Actions   []Action `json:"actions,omitempty"`
 	Label     string   `json:"label,omitempty"`
 
+	// Restricted is set when the key behind the token is narrower than its
+	// principal: scoped by project or role on its record, or by any caveat.
+	Restricted bool `json:"restricted,omitempty"`
+
 	// KeyID is the API key the token came from, for revocation checks.
 	KeyID string `json:"key_id,omitempty"`
 }
