@@ -602,6 +602,7 @@ main {
   margin-top: 8px;
 }
 .author-label { font-size: 11px; color: var(--text-faint); }
+.author-name { font-weight: 600; color: var(--text-2); font-family: monospace; }
 .author-input {
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -872,6 +873,8 @@ main {
 const TT_SERVER = /*TT_CONFIG*/null;
 let API = '/api';
 let authToken = null;
+// Logged-in handle on tt server (from /api/v1/whoami); null in local mode.
+let myHandle = null;
 
 // apiFetch calls the task API. On tt server it adds a bearer JWT, fetched
 // with the session cookie and refreshed once on 401.
@@ -896,6 +899,32 @@ async function refreshToken() {
     throw new Error('login required');
   }
   authToken = (await res.json()).token;
+}
+
+// fetchMyHandle looks up the logged-in user once per session so the comment
+// box can show who will be credited instead of asking for an author.
+async function fetchMyHandle() {
+  if (!TT_SERVER || myHandle) return;
+  try {
+    const res = await apiFetch('/api/v1/whoami');
+    if (res.ok) {
+      const me = await res.json();
+      if (me && me.handle) myHandle = me.handle;
+    }
+  } catch (_) { /* fall back to asking */ }
+}
+
+// hydrateCommentIdentity replaces the author prompt with the logged-in
+// handle once whoami has answered. Renders before that keep the input,
+// which is harmless: the server credits the caller regardless.
+async function hydrateCommentIdentity() {
+  if (!TT_SERVER) return;
+  if (!myHandle) await fetchMyHandle();
+  const inp = document.getElementById('comment-author');
+  const label = document.querySelector('.add-comment-footer .author-label');
+  if (!inp || !label || !myHandle) return;
+  label.innerHTML = 'Commenting as <span class="author-name">' + esc(myHandle) + '</span>';
+  inp.remove();
 }
 
 // On tt server, pick the project from ?project=, else the last one used
@@ -1435,15 +1464,18 @@ function renderTaskDetail(data) {
         <div class="add-comment">
           <textarea id="comment-body" placeholder="Add a comment… (markdown supported)"></textarea>
           <div class="add-comment-footer">
-            <span class="author-label">Author:</span>
+            ${TT_SERVER && myHandle
+              ? `<span class="author-label">Commenting as <span class="author-name">${esc(myHandle)}</span></span>`
+              : `<span class="author-label">Author:</span>
             <input class="author-input" id="comment-author" type="text"
-                   placeholder="your-handle" value="${esc(savedAuthor)}">
+                   placeholder="your-handle" value="${esc(savedAuthor)}">`}
             <div class="spacer"></div>
             <button class="btn btn-primary" onclick="submitComment('${esc(t.id)}')">Add Comment</button>
           </div>
         </div>
       </div>
     </div>`;
+  hydrateCommentIdentity();
 }
 
 // ── Mutations ──────────────────────────────────────────────
@@ -1687,7 +1719,9 @@ async function submitComment(id) {
   const bodyEl   = document.getElementById('comment-body');
   const authorEl = document.getElementById('comment-author');
   const body     = bodyEl.value.trim();
-  const author   = authorEl.value.trim();
+  // On tt server the author is the logged-in user; sending one would be
+  // ignored anyway, and the box isn't shown for it.
+  const author   = (TT_SERVER && myHandle) ? '' : authorEl.value.trim();
   if (!body) return;
 
   if (author) localStorage.setItem('tt-author', author);
@@ -1874,6 +1908,7 @@ document.addEventListener('keydown', e => {
 // ── Boot ───────────────────────────────────────────────────
 setupProject().then(ok => {
   if (!ok) return;
+  fetchMyHandle();
   renderFilters();
   loadTasks();
   if (ALL) PROJECTS.forEach(p => startLive(projBase(p.slug)));
