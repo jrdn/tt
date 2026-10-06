@@ -1,3 +1,9 @@
+## Build & Test
+
+```bash
+mise run test:ui      # headless-Chrome tests for the web UI (skipped without Chrome)
+```
+
 ## tt Task Manager
 
 This project uses **tt** for task tracking. Tasks live in a local SQLite database at `~/.config/tt/<repo>.db`.
