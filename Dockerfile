@@ -11,6 +11,6 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags=
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /tt /tt
 COPY skills /skills
-EXPOSE 8080
+EXPOSE 8080 9090
 ENTRYPOINT ["/tt"]
 CMD ["server"]

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,10 +15,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jrdn/tt/internal/server"
+	"github.com/jrdn/tt/internal/telemetry"
 )
 
 func newServerCmd() *cobra.Command {
-	var addr string
+	var addr, metricsAddr string
 	cmd := &cobra.Command{
 		Use:   "server",
 		Short: "Run the multiuser tt server (Postgres)",
@@ -34,27 +36,56 @@ Configuration comes from the environment:
   TT_JWT_TTL            JWT lifetime (default 1h)
   TT_KEY_DEFAULT_TTL    API key lifetime when none is given (default 8760h)
   TT_KEY_MAX_TTL        longest API key lifetime allowed (default: the default)
-  TT_LOGIN_TTL          lifetime of keys issued by tt login (default 2160h)`,
+  TT_LOGIN_TTL          lifetime of keys issued by tt login (default 2160h)
+
+Observability: Prometheus metrics are served at /metrics on --metrics-addr
+(scrape it with Prometheus or Alloy). Logs are JSON on stderr; set
+OTEL_EXPORTER_OTLP_ENDPOINT (e.g. http://alloy:4318) to also push them over
+OTLP/HTTP. OTEL_RESOURCE_ATTRIBUTES and OTEL_SERVICE_NAME are honoured.`,
 		Annotations: map[string]string{noLocalDB: "1"},
 		Args:        cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+			tel, err := telemetry.Setup(ctx)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				flush, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				tel.Shutdown(flush)
+			}()
 			srv, err := openServer(ctx)
 			if err != nil {
 				return err
 			}
 			defer srv.Close()
 
-			hs := &http.Server{Addr: addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
+			hs := &http.Server{Addr: addr, Handler: tel.Middleware(srv.Handler()), ReadHeaderTimeout: 10 * time.Second}
+			servers := []*http.Server{hs}
+			if metricsAddr != "" {
+				mux := http.NewServeMux()
+				mux.Handle("GET /metrics", tel.MetricsHandler())
+				ms := &http.Server{Addr: metricsAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+				servers = append(servers, ms)
+				go func() {
+					if err := ms.ListenAndServe(); err != http.ErrServerClosed {
+						slog.Error("metrics listener", "err", err)
+					}
+				}()
+				slog.Info("metrics listening", "addr", metricsAddr)
+			}
 			go func() {
 				<-ctx.Done()
 				shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
-				hs.Shutdown(shutdown)
+				for _, s := range servers {
+					s.Shutdown(shutdown)
+				}
 			}()
-			fmt.Printf("tt server listening on %s\n", addr)
+			slog.Info("tt server listening", "addr", addr)
 			if err := hs.ListenAndServe(); err != http.ErrServerClosed {
 				return err
 			}
@@ -62,6 +93,7 @@ Configuration comes from the environment:
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", ":8080", "Address to listen on")
+	cmd.Flags().StringVar(&metricsAddr, "metrics-addr", ":9090", "Address serving Prometheus /metrics (empty disables)")
 	cmd.AddCommand(newServerAddUserCmd(), newServerLinkGitHubCmd(), newServerCreateKeyCmd(), newServerImportCmd())
 	return cmd
 }
