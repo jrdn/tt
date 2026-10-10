@@ -149,6 +149,21 @@ body.show-dashboard .layout { display: none; }
 .dash-counts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .dash-sub { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
 .dash-sub.warn { color: #ef4444; }
+.dash-issues { margin-top: 24px; }
+.dash-issues h2 { font-size: 14px; color: var(--text); margin-bottom: 10px; }
+.dash-issues h2 small { font-weight: 400; color: var(--text-dim); font-size: 12px; }
+.issue-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.issue-filters input, .issue-filters select { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+.issue-filters input { flex: 1; min-width: 180px; }
+.issue-table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.issue-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.issue-table th, .issue-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.issue-table td.title { white-space: normal; min-width: 220px; color: var(--text); }
+.issue-table tbody tr { cursor: pointer; }
+.issue-table tbody tr:hover { background: var(--bg-muted); }
+.issue-table tbody tr:last-child td { border-bottom: none; }
+.issue-table th { color: var(--text-dim); font-weight: 600; font-size: 12px; }
+.issue-table td { color: var(--text-dim); }
 
 /* ── Sidebar ── */
 aside {
@@ -1252,8 +1267,97 @@ function renderDashboard(results) {
     stat(active, 'active') +
     ['in_progress', 'in_review', 'ready'].map(s => stat(total[s] || 0, STATUS_LABELS[s].toLowerCase())).join('') +
     stat(overdue, 'overdue');
-  document.getElementById('dashboard').innerHTML =
+  const el = document.getElementById('dashboard');
+  if (!document.getElementById('dash-top')) {
+    el.innerHTML = '<div id="dash-top"></div><div class="dash-issues" id="dash-issues"></div>';
+    buildIssueShell();
+  }
+  document.getElementById('dash-top').innerHTML =
     `<div class="dash-totals">${totals}</div><div class="dash-grid">${cards.join('')}</div>`;
+  dashTasks = results.flatMap(({p, tasks}) => (tasks || []).map(t => Object.assign({}, t, {_project: p.slug})));
+  renderIssueFilters();
+  renderIssues();
+}
+
+// ── Dashboard issue table ──────────────────────────────────
+// Filtered client-side over the tasks already fetched for the cards. The
+// controls are built once so live refreshes don't reset them or steal focus.
+let dashTasks = [];
+let issueSearchDebounce = null;
+
+function buildIssueShell() {
+  document.getElementById('dash-issues').innerHTML = `
+    <h2>Issues <small id="issue-count"></small></h2>
+    <div class="issue-filters">
+      <input type="search" id="issue-search" placeholder="Search title, id, assignee…" oninput="onIssueSearch()">
+      <select id="issue-status" onchange="renderIssues()"></select>
+      <select id="issue-assignee" onchange="renderIssues()"></select>
+      <select id="issue-priority" onchange="renderIssues()"></select>
+      <select id="issue-project" onchange="renderIssues()"></select>
+    </div>
+    <div class="issue-table-wrap"><table class="issue-table">
+      <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Pri</th><th>Assignee</th><th>Project</th><th>Due</th></tr></thead>
+      <tbody id="issue-rows"></tbody>
+    </table></div>`;
+}
+
+// Refill a select's options, keeping the current choice if it still exists.
+function fillSelect(id, options) {
+  const sel = document.getElementById(id);
+  const cur = sel.value;
+  sel.innerHTML = options.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join('');
+  if (options.some(([v]) => v === cur)) sel.value = cur;
+}
+
+function renderIssueFilters() {
+  fillSelect('issue-status', [['active', 'Active'], ['all', 'All statuses']].concat(
+    ALL_STATUSES.map(s => [s, STATUS_LABELS[s]])));
+  const assignees = [...new Set(dashTasks.map(t => t.assignee).filter(Boolean))].sort();
+  fillSelect('issue-assignee', [['', 'Any assignee'], ['__none__', 'Unassigned']].concat(assignees.map(a => [a, '@' + a])));
+  fillSelect('issue-priority', [['', 'Any priority']].concat(PRI_LABELS.map((l, i) => [String(i), l])));
+  const projects = [...new Map(dashTasks.map(t => [t._project || '', t._project ? projName(t._project) : 'Tasks'])).entries()];
+  fillSelect('issue-project', [['__all__', 'All projects']].concat(projects));
+  document.getElementById('issue-project').style.display = projects.length > 1 ? '' : 'none';
+}
+
+function onIssueSearch() {
+  clearTimeout(issueSearchDebounce);
+  issueSearchDebounce = setTimeout(renderIssues, 150);
+}
+
+function renderIssues() {
+  const q = document.getElementById('issue-search').value.trim().toLowerCase();
+  const status = document.getElementById('issue-status').value;
+  const assignee = document.getElementById('issue-assignee').value;
+  const pri = document.getElementById('issue-priority').value;
+  const project = document.getElementById('issue-project').value;
+  const rows = dashTasks.filter(t =>
+    (status === 'all' || (status === 'active' ? t.status !== 'done' && t.status !== 'cancelled' : t.status === status)) &&
+    (!assignee || (assignee === '__none__' ? !t.assignee : t.assignee === assignee)) &&
+    (!pri || String(t.priority) === pri) &&
+    (project === '__all__' || (t._project || '') === project) &&
+    (!q || [t.title, t.id, t.assignee, t.description].some(v => v && String(v).toLowerCase().includes(q)))
+  ).sort((a, b) => (a.priority - b.priority) || String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+  document.getElementById('issue-count').textContent = `${rows.length} of ${dashTasks.length}`;
+  document.getElementById('issue-rows').innerHTML = rows.length ? rows.map(t => `
+    <tr onclick="openIssue('${esc(t.id)}', '${esc(t._project || '')}')">
+      <td><span class="id-chip">${esc(t.id)}</span></td>
+      <td class="title">${esc(t.title)}</td>
+      <td>${badge(t.status)}</td>
+      <td>${priSpan(t.priority)}</td>
+      <td>${t.assignee ? '@' + esc(t.assignee) : ''}</td>
+      <td>${t._project ? esc(projName(t._project)) : ''}</td>
+      <td>${esc(t.due_date || '')}</td>
+    </tr>`).join('') : '<tr><td colspan="7">No matching issues</td></tr>';
+}
+
+function openIssue(id, project) {
+  if (project && !(PROJECTS.length && !ALL && API === projBase(project))) {
+    // Another project than the one loaded: switch to it first.
+    return switchProject(project);
+  }
+  toggleDashboard(false);
+  selectTask(id, '');
 }
 
 // ── Mobile panel switching ─────────────────────────────────
