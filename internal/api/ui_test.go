@@ -161,6 +161,44 @@ func TestDashboardShowsStatusCounts(t *testing.T) {
 	}
 }
 
+func TestDashboardIssueTableFilters(t *testing.T) {
+	ctx, url := newBrowser(t)
+	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitVisible("#dash-btn")); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []string{
+		`{title:'apple pie', status:'open', assignee:'ann'}`,
+		`{title:'banana split', status:'in_progress', assignee:'bob'}`,
+	} {
+		var ok bool
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`fetch('/api/tasks', {method:'POST', body: JSON.stringify(`+body+`)}).then(r => r.ok)`, &ok, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) })); err != nil || !ok {
+			t.Fatalf("create task: %v %v", ok, err)
+		}
+	}
+	rows := func(js string) string {
+		var out string
+		if err := chromedp.Run(ctx, chromedp.Evaluate(js+`; new Promise(r => setTimeout(() => r(document.getElementById('issue-rows').innerText), 400))`, &out, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) })); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if err := chromedp.Run(ctx, chromedp.Click("#dash-btn", chromedp.ByID), chromedp.Poll(`document.querySelectorAll('#issue-rows tr').length >= 2`, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if got := rows(`0`); !strings.Contains(got, "apple pie") || !strings.Contains(got, "banana split") {
+		t.Errorf("unfiltered rows = %q", got)
+	}
+	if got := rows(`document.getElementById('issue-search').value='banana'; onIssueSearch()`); strings.Contains(got, "apple") || !strings.Contains(got, "banana") {
+		t.Errorf("search rows = %q", got)
+	}
+	if got := rows(`document.getElementById('issue-search').value=''; document.getElementById('issue-assignee').value='ann'; renderIssues()`); strings.Contains(got, "banana") || !strings.Contains(got, "apple") {
+		t.Errorf("assignee rows = %q", got)
+	}
+	if got := rows(`document.getElementById('issue-assignee').value=''; document.getElementById('issue-status').value='in_progress'; renderIssues()`); strings.Contains(got, "apple") || !strings.Contains(got, "banana") {
+		t.Errorf("status rows = %q", got)
+	}
+}
+
 // newServerModeBrowser serves the server-mode UI with two projects, "alpha"
 // and "beta", each with one task.
 func newServerModeBrowser(t *testing.T) (context.Context, string) {
