@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/jrdn/tt/internal/api"
 	"github.com/jrdn/tt/internal/auth"
@@ -601,6 +603,8 @@ func (d *Directory) DeleteSession(ctx context.Context, token string) error {
 // RecordEvent appends to the audit log. Failures are returned but callers
 // treat them as non-fatal: the change itself has already been made.
 func (d *Directory) RecordEvent(ctx context.Context, project *Project, c *auth.Claims, taskID, action string, detail map[string]any) error {
+	ctx, span := tracer.Start(ctx, "audit.record", trace.WithAttributes(attribute.String("tt.action", action)))
+	defer span.End()
 	var detailJSON []byte
 	if detail != nil {
 		var err error

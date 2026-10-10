@@ -215,6 +215,16 @@ tt server import --project myproj --as jrdn ~/.config/tt/myrepo.db
 
 Default lifetimes: API keys 1 year (`TT_KEY_DEFAULT_TTL`, capped by `TT_KEY_MAX_TTL`), `tt login` keys 90 days (`TT_LOGIN_TTL`), JWTs 1 hour (`TT_JWT_TTL`). Revoking a key, removing a member or lowering their role takes effect immediately; open live-update streams close within 30 seconds.
 
+### Observability
+
+The server emits OpenTelemetry metrics and logs.
+
+- **Metrics**: Prometheus format at `GET /metrics` on the same port as the API (unauthenticated, so don't expose it publicly; block it at your ingress). Includes HTTP server metrics (`http_server_request_duration_seconds`, `http_server_active_requests`, body sizes) labelled by method, route pattern and status, and Postgres pool metrics (`db_sql_connection_*`) labelled `tt_pool` (`global` or the project schema). Scrape with Prometheus or Alloy (`prometheus.scrape`).
+- **Logs**: JSON on stderr, including one line per request with its `trace_id`, for Alloy to collect from the container output.
+- **Traces**: one span per request (named by route) with a child span per SQL query. Set `OTEL_EXPORTER_OTLP_ENDPOINT` (e.g. `http://alloy:4318`) to push them over OTLP/HTTP to an `otelcol.receiver.otlp`; without it nothing is exported. Incoming `traceparent` headers are honoured.
+
+`OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` set the resource attributes (default service name `tt-server`).
+
 ## Sync
 
 Sync is intentionally not automatic. Pull before you start working, push when you're done.

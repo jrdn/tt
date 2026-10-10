@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -10,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/github"
 )
@@ -73,7 +75,8 @@ func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: oauthStateCookie, Path: "/auth/github", MaxAge: -1})
 
-	ctx := r.Context()
+	// Outbound GitHub calls are traced and carry the request's trace context.
+	ctx := context.WithValue(r.Context(), oauth2.HTTPClient, &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)})
 	tok, err := s.github.Exchange(ctx, r.URL.Query().Get("code"))
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "GitHub token exchange failed: "+err.Error())
@@ -86,12 +89,12 @@ func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		Name  string `json:"name"`
 		Email string `json:"email"`
 	}
-	if err := getJSON(client, "https://api.github.com/user", &gh); err != nil {
+	if err := getJSON(ctx, client, "https://api.github.com/user", &gh); err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	if gh.Email == "" {
-		gh.Email = primaryEmail(client)
+		gh.Email = primaryEmail(ctx, client)
 	}
 	admin := slices.Contains(s.cfg.AdminLogins, gh.Login)
 	p, err := s.dir.UpsertGitHubUser(ctx, gh.ID, gh.Login, gh.Email, gh.Name, admin)
@@ -124,8 +127,12 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func getJSON(client *http.Client, url string, v any) error {
-	resp, err := client.Get(url)
+func getJSON(ctx context.Context, client *http.Client, url string, v any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("GitHub API: %w", err)
 	}
@@ -138,13 +145,13 @@ func getJSON(client *http.Client, url string, v any) error {
 
 // primaryEmail looks up the verified primary address for accounts that
 // hide their email from the public profile.
-func primaryEmail(client *http.Client) string {
+func primaryEmail(ctx context.Context, client *http.Client) string {
 	var emails []struct {
 		Email    string `json:"email"`
 		Primary  bool   `json:"primary"`
 		Verified bool   `json:"verified"`
 	}
-	if getJSON(client, "https://api.github.com/user/emails", &emails) != nil {
+	if getJSON(ctx, client, "https://api.github.com/user/emails", &emails) != nil {
 		return ""
 	}
 	for _, e := range emails {

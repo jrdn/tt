@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jrdn/tt/internal/server"
+	"github.com/jrdn/tt/internal/telemetry"
 )
 
 func newServerCmd() *cobra.Command {
@@ -34,27 +36,44 @@ Configuration comes from the environment:
   TT_JWT_TTL            JWT lifetime (default 1h)
   TT_KEY_DEFAULT_TTL    API key lifetime when none is given (default 8760h)
   TT_KEY_MAX_TTL        longest API key lifetime allowed (default: the default)
-  TT_LOGIN_TTL          lifetime of keys issued by tt login (default 2160h)`,
+  TT_LOGIN_TTL          lifetime of keys issued by tt login (default 2160h)
+
+Observability: Prometheus metrics are served at /metrics on the same address
+as the API. Logs are JSON on stderr. Traces are pushed over OTLP/HTTP when
+OTEL_EXPORTER_OTLP_ENDPOINT is set. OTEL_SERVICE_NAME and
+OTEL_RESOURCE_ATTRIBUTES set the resource attributes.`,
 		Annotations: map[string]string{noLocalDB: "1"},
 		Args:        cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+			tel, err := telemetry.Setup(ctx)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				flush, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				tel.Shutdown(flush)
+			}()
 			srv, err := openServer(ctx)
 			if err != nil {
 				return err
 			}
 			defer srv.Close()
 
-			hs := &http.Server{Addr: addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
+			mux := http.NewServeMux()
+			mux.Handle("GET /metrics", tel.MetricsHandler())
+			mux.Handle("/", srv.Handler())
+			hs := &http.Server{Addr: addr, Handler: tel.Middleware(mux), ReadHeaderTimeout: 10 * time.Second}
 			go func() {
 				<-ctx.Done()
 				shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				hs.Shutdown(shutdown)
 			}()
-			fmt.Printf("tt server listening on %s\n", addr)
+			slog.Info("tt server listening", "addr", addr)
 			if err := hs.ListenAndServe(); err != http.ErrServerClosed {
 				return err
 			}

@@ -3,11 +3,13 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/jrdn/tt/internal/task"
 )
@@ -78,7 +80,7 @@ func (h *hub) run(ctx context.Context, url string) {
 		if ctx.Err() != nil {
 			return
 		}
-		log.Printf("live events: %v; reconnecting in %s", err, backoff)
+		slog.WarnContext(ctx, "live events disconnected", "err", err, "retry_in", backoff)
 		select {
 		case <-ctx.Done():
 			return
@@ -114,9 +116,11 @@ func (h *hub) listen(ctx context.Context, url string) error {
 			Action    string `json:"action"`
 		}
 		if err := json.Unmarshal([]byte(n.Payload), &msg); err != nil {
-			log.Printf("live events: bad payload %q: %v", n.Payload, err)
+			slog.WarnContext(ctx, "live events: bad payload", "payload", n.Payload, "err", err)
 			continue
 		}
+		_, span := tracer.Start(ctx, "live-events.dispatch", trace.WithAttributes(attribute.String("tt.action", msg.Action)))
 		h.publish(msg.ProjectID, task.Event{TaskID: msg.TaskID, Action: msg.Action})
+		span.End()
 	}
 }
