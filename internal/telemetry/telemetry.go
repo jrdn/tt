@@ -2,7 +2,10 @@
 //
 // Metrics are recorded with the OTel SDK and exposed in Prometheus format by
 // MetricsHandler, for Prometheus or Alloy to scrape. Logs go to stderr as
-// JSON, where Alloy collects them from the container output.
+// JSON, where Alloy collects them from the container output. Traces are pushed
+// over OTLP/HTTP when OTEL_EXPORTER_OTLP_ENDPOINT (or the _TRACES_ variant) is
+// set, e.g. to Alloy's otelcol.receiver.otlp; without it spans are still
+// created, so log lines carry trace ids, but are not exported.
 package telemetry
 
 import (
@@ -10,17 +13,19 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
-	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const scope = "github.com/jrdn/tt"
@@ -28,9 +33,6 @@ const scope = "github.com/jrdn/tt"
 // Telemetry holds the metric instruments and the exporters' lifecycle.
 type Telemetry struct {
 	metricsHandler http.Handler
-	requests       metric.Int64Counter
-	duration       metric.Float64Histogram
-	inflight       metric.Int64UpDownCounter
 	shutdown       []func(context.Context) error
 }
 
@@ -55,17 +57,18 @@ func Setup(ctx context.Context) (*Telemetry, error) {
 	otel.SetMeterProvider(mp)
 	t.metricsHandler = promhttp.Handler()
 
-	m := mp.Meter(scope)
-	if t.requests, err = m.Int64Counter("http.server.request", metric.WithDescription("HTTP requests handled")); err != nil {
-		return nil, err
+	topts := []sdktrace.TracerProviderOption{sdktrace.WithResource(res)}
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" || os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") != "" {
+		exp, err := otlptracehttp.New(ctx)
+		if err != nil {
+			return nil, err
+		}
+		topts = append(topts, sdktrace.WithBatcher(exp))
 	}
-	if t.duration, err = m.Float64Histogram("http.server.request.duration", metric.WithUnit("s"),
-		metric.WithDescription("HTTP request duration")); err != nil {
-		return nil, err
-	}
-	if t.inflight, err = m.Int64UpDownCounter("http.server.active_requests", metric.WithDescription("In-flight HTTP requests")); err != nil {
-		return nil, err
-	}
+	tp := sdktrace.NewTracerProvider(topts...)
+	t.shutdown = append(t.shutdown, tp.Shutdown)
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	return t, nil
@@ -81,14 +84,12 @@ func (t *Telemetry) Shutdown(ctx context.Context) {
 	}
 }
 
-// Middleware records request count, duration and in-flight requests, and logs
-// each request. The route label is the mux pattern, which keeps cardinality
-// bounded (never the raw path, which contains task ids and project slugs).
+// Middleware traces each request and records the standard HTTP server metrics
+// (request duration histogram and active requests, labelled with the mux route
+// pattern rather than the raw path, which contains task ids and project slugs).
+// It also logs one line per request, carrying the trace id.
 func (t *Telemetry) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		t.inflight.Add(ctx, 1)
-		defer t.inflight.Add(ctx, -1)
+	logged := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
@@ -97,18 +98,20 @@ func (t *Telemetry) Middleware(next http.Handler) http.Handler {
 		if route == "" {
 			route = "unmatched"
 		}
-		attrs := metric.WithAttributes(
-			attribute.String("http.request.method", r.Method),
-			attribute.String("http.route", route),
-			attribute.String("http.response.status_code", strconv.Itoa(rec.status)),
-		)
-		elapsed := time.Since(start)
-		t.requests.Add(ctx, 1, attrs)
-		t.duration.Record(ctx, elapsed.Seconds(), attrs)
-		slog.LogAttrs(ctx, levelFor(rec.status), "http request",
+		// The span starts before routing; name it by pattern once known.
+		trace.SpanFromContext(r.Context()).SetName(r.Method + " " + route)
+		attrs := []slog.Attr{
 			slog.String("method", r.Method), slog.String("route", route),
-			slog.Int("status", rec.status), slog.Duration("duration", elapsed))
+			slog.Int("status", rec.status), slog.Duration("duration", time.Since(start)),
+		}
+		if sc := trace.SpanContextFromContext(r.Context()); sc.IsValid() {
+			attrs = append(attrs, slog.String("trace_id", sc.TraceID().String()))
+		}
+		slog.LogAttrs(r.Context(), levelFor(rec.status), "http request", attrs...)
 	})
+	return otelhttp.NewHandler(logged, "http.server", otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+		return r.Method
+	}))
 }
 
 func levelFor(status int) slog.Level {

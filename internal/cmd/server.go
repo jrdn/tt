@@ -39,7 +39,8 @@ Configuration comes from the environment:
   TT_LOGIN_TTL          lifetime of keys issued by tt login (default 2160h)
 
 Observability: Prometheus metrics are served at /metrics on the same address
-as the API. Logs are JSON on stderr. OTEL_SERVICE_NAME and
+as the API. Logs are JSON on stderr. Traces are pushed over OTLP/HTTP when
+OTEL_EXPORTER_OTLP_ENDPOINT is set. OTEL_SERVICE_NAME and
 OTEL_RESOURCE_ATTRIBUTES set the resource attributes.`,
 		Annotations: map[string]string{noLocalDB: "1"},
 		Args:        cobra.NoArgs,

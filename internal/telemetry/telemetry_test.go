@@ -29,14 +29,14 @@ func TestMiddlewareRecordsRouteMetrics(t *testing.T) {
 	tel.MetricsHandler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
 	body := rec.Body.String()
 	// The route is the pattern, so both ids land in one series.
-	want := `http_route="GET /api/v1/tasks/{id}"`
+	want := `http_route="/api/v1/tasks/{id}"`
 	if !strings.Contains(body, want) {
 		t.Fatalf("metrics missing %s:\n%s", want, body)
 	}
 	if strings.Contains(body, "ab12") {
 		t.Errorf("raw path leaked into metric labels")
 	}
-	for _, m := range []string{"http_server_request_total", "http_server_request_duration_seconds_bucket", "http_response_status_code=\"418\""} {
+	for _, m := range []string{"http_server_request_duration_seconds_bucket", "http_response_status_code=\"418\""} {
 		if !strings.Contains(body, m) {
 			t.Errorf("metrics missing %q", m)
 		}

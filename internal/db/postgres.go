@@ -10,10 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/XSAM/otelsql"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
+	"go.opentelemetry.io/otel/attribute"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
 //go:embed migrations/postgres
@@ -22,7 +25,7 @@ var pgMigrations embed.FS
 // OpenPostgres connects to the server's global schema (users, projects,
 // keys) at url and applies pending global migrations.
 func OpenPostgres(ctx context.Context, url string) (*sqlx.DB, error) {
-	return openPostgres(ctx, url, "global")
+	return openPostgres(ctx, url, "global", "global")
 }
 
 // OpenProjectSchema connects to one project's task schema, creating it if
@@ -49,7 +52,7 @@ func OpenProjectSchema(ctx context.Context, url, schema string) (*sqlx.DB, error
 	if strings.Contains(url, "?") {
 		sep = "&"
 	}
-	return openPostgres(ctx, url+sep+"search_path="+schema, "project")
+	return openPostgres(ctx, url+sep+"search_path="+schema, "project", schema)
 }
 
 // validSchemaName allows only names safe to splice into SQL unquoted.
@@ -65,12 +68,14 @@ func validSchemaName(s string) bool {
 	return true
 }
 
-func openPostgres(ctx context.Context, url, migrationSet string) (*sqlx.DB, error) {
+// openPostgres opens a pool whose queries are traced and whose pool stats are
+// exported as metrics, labelled tt.pool=pool (one pool per project schema).
+func openPostgres(ctx context.Context, url, migrationSet, pool string) (*sqlx.DB, error) {
 	cfg, err := pgx.ParseConfig(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse postgres url: %w", err)
 	}
-	sqlDB := stdlib.OpenDB(*cfg, stdlib.OptionAfterConnect(func(ctx context.Context, c *pgx.Conn) error {
+	connector := stdlib.GetConnector(*cfg, stdlib.OptionAfterConnect(func(ctx context.Context, c *pgx.Conn) error {
 		// Scan timestamptz in UTC so values format the same as the RFC3339
 		// "Z" strings stored by SQLite.
 		c.TypeMap().RegisterType(&pgtype.Type{
@@ -80,12 +85,20 @@ func openPostgres(ctx context.Context, url, migrationSet string) (*sqlx.DB, erro
 		})
 		return nil
 	}))
+	sqlDB := otelsql.OpenDB(connector,
+		otelsql.WithAttributes(semconv.DBSystemPostgreSQL, attribute.String("tt.pool", pool)),
+		otelsql.WithSpanOptions(otelsql.SpanOptions{OmitConnResetSession: true, OmitRows: true}))
 	// Unsafe: tables carry columns the Go structs don't map (e.g. seq), and
 	// queries use SELECT * for parity with SQLite.
 	d := sqlx.NewDb(sqlDB, "pgx").Unsafe()
 	if err := d.PingContext(ctx); err != nil {
 		d.Close()
 		return nil, fmt.Errorf("connect postgres: %w", err)
+	}
+	if _, err := otelsql.RegisterDBStatsMetrics(sqlDB,
+		otelsql.WithAttributes(semconv.DBSystemPostgreSQL, attribute.String("tt.pool", pool))); err != nil {
+		d.Close()
+		return nil, fmt.Errorf("register db metrics: %w", err)
 	}
 	if err := migratePostgres(ctx, d, migrationSet); err != nil {
 		d.Close()
