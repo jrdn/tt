@@ -19,7 +19,7 @@ import (
 )
 
 func newServerCmd() *cobra.Command {
-	var addr, metricsAddr string
+	var addr string
 	cmd := &cobra.Command{
 		Use:   "server",
 		Short: "Run the multiuser tt server (Postgres)",
@@ -38,10 +38,9 @@ Configuration comes from the environment:
   TT_KEY_MAX_TTL        longest API key lifetime allowed (default: the default)
   TT_LOGIN_TTL          lifetime of keys issued by tt login (default 2160h)
 
-Observability: Prometheus metrics are served at /metrics on --metrics-addr
-(scrape it with Prometheus or Alloy). Logs are JSON on stderr; set
-OTEL_EXPORTER_OTLP_ENDPOINT (e.g. http://alloy:4318) to also push them over
-OTLP/HTTP. OTEL_RESOURCE_ATTRIBUTES and OTEL_SERVICE_NAME are honoured.`,
+Observability: Prometheus metrics are served at /metrics on the same address
+as the API. Logs are JSON on stderr. OTEL_SERVICE_NAME and
+OTEL_RESOURCE_ATTRIBUTES set the resource attributes.`,
 		Annotations: map[string]string{noLocalDB: "1"},
 		Args:        cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -63,27 +62,15 @@ OTLP/HTTP. OTEL_RESOURCE_ATTRIBUTES and OTEL_SERVICE_NAME are honoured.`,
 			}
 			defer srv.Close()
 
-			hs := &http.Server{Addr: addr, Handler: tel.Middleware(srv.Handler()), ReadHeaderTimeout: 10 * time.Second}
-			servers := []*http.Server{hs}
-			if metricsAddr != "" {
-				mux := http.NewServeMux()
-				mux.Handle("GET /metrics", tel.MetricsHandler())
-				ms := &http.Server{Addr: metricsAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-				servers = append(servers, ms)
-				go func() {
-					if err := ms.ListenAndServe(); err != http.ErrServerClosed {
-						slog.Error("metrics listener", "err", err)
-					}
-				}()
-				slog.Info("metrics listening", "addr", metricsAddr)
-			}
+			mux := http.NewServeMux()
+			mux.Handle("GET /metrics", tel.MetricsHandler())
+			mux.Handle("/", srv.Handler())
+			hs := &http.Server{Addr: addr, Handler: tel.Middleware(mux), ReadHeaderTimeout: 10 * time.Second}
 			go func() {
 				<-ctx.Done()
 				shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
-				for _, s := range servers {
-					s.Shutdown(shutdown)
-				}
+				hs.Shutdown(shutdown)
 			}()
 			slog.Info("tt server listening", "addr", addr)
 			if err := hs.ListenAndServe(); err != http.ErrServerClosed {
@@ -93,7 +80,6 @@ OTLP/HTTP. OTEL_RESOURCE_ATTRIBUTES and OTEL_SERVICE_NAME are honoured.`,
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", ":8080", "Address to listen on")
-	cmd.Flags().StringVar(&metricsAddr, "metrics-addr", ":9090", "Address serving Prometheus /metrics (empty disables)")
 	cmd.AddCommand(newServerAddUserCmd(), newServerLinkGitHubCmd(), newServerCreateKeyCmd(), newServerImportCmd())
 	return cmd
 }

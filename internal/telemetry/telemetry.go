@@ -1,9 +1,8 @@
 // Package telemetry wires OpenTelemetry metrics and logs for tt server.
 //
 // Metrics are recorded with the OTel SDK and exposed in Prometheus format by
-// MetricsHandler, for Prometheus or Alloy to scrape. Logs always go to stderr
-// as JSON; when OTEL_EXPORTER_OTLP_ENDPOINT (or the _LOGS_ variant) is set they
-// are also pushed over OTLP/HTTP, e.g. to Alloy's otelcol.receiver.otlp.
+// MetricsHandler, for Prometheus or Alloy to scrape. Logs go to stderr as
+// JSON, where Alloy collects them from the container output.
 package telemetry
 
 import (
@@ -15,13 +14,10 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/metric"
-	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
@@ -38,8 +34,7 @@ type Telemetry struct {
 	shutdown       []func(context.Context) error
 }
 
-// Setup configures metrics and installs a JSON (and optionally OTLP) slog
-// default. The standard log package is routed through it, so existing
+// Setup configures metrics and installs a JSON slog default. The standard log package is routed through it, so existing
 // log.Printf calls become structured records.
 func Setup(ctx context.Context) (*Telemetry, error) {
 	res, err := resource.New(ctx,
@@ -72,17 +67,7 @@ func Setup(ctx context.Context) (*Telemetry, error) {
 		return nil, err
 	}
 
-	handler := slog.Handler(slog.NewJSONHandler(os.Stderr, nil))
-	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" || os.Getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") != "" {
-		exp, err := otlploghttp.New(ctx)
-		if err != nil {
-			return nil, err
-		}
-		lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewBatchProcessor(exp)), sdklog.WithResource(res))
-		t.shutdown = append(t.shutdown, lp.Shutdown)
-		handler = fanout{handler, otelslog.NewHandler(scope, otelslog.WithLoggerProvider(lp))}
-	}
-	slog.SetDefault(slog.New(handler))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	return t, nil
 }
 
@@ -151,41 +136,4 @@ func (w *statusWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
-}
-
-// fanout sends each record to every handler.
-type fanout []slog.Handler
-
-func (f fanout) Enabled(ctx context.Context, l slog.Level) bool {
-	for _, h := range f {
-		if h.Enabled(ctx, l) {
-			return true
-		}
-	}
-	return false
-}
-
-func (f fanout) Handle(ctx context.Context, r slog.Record) error {
-	for _, h := range f {
-		if h.Enabled(ctx, r.Level) {
-			h.Handle(ctx, r.Clone())
-		}
-	}
-	return nil
-}
-
-func (f fanout) WithAttrs(a []slog.Attr) slog.Handler {
-	out := make(fanout, len(f))
-	for i, h := range f {
-		out[i] = h.WithAttrs(a)
-	}
-	return out
-}
-
-func (f fanout) WithGroup(n string) slog.Handler {
-	out := make(fanout, len(f))
-	for i, h := range f {
-		out[i] = h.WithGroup(n)
-	}
-	return out
 }

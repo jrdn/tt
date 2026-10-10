@@ -219,8 +219,8 @@ Default lifetimes: API keys 1 year (`TT_KEY_DEFAULT_TTL`, capped by `TT_KEY_MAX_
 
 The server emits OpenTelemetry metrics and logs.
 
-- **Metrics**: Prometheus format at `GET /metrics` on `--metrics-addr` (default `:9090`, a separate listener from the API so it isn't exposed publicly; empty disables). Series: `http_server_request_total`, `http_server_request_duration_seconds` and `http_server_active_requests`, labelled by method, route pattern and status. Scrape with Prometheus or Alloy (`prometheus.scrape`).
-- **Logs**: JSON on stderr, including one line per request, so Alloy can tail the container's output. Set `OTEL_EXPORTER_OTLP_ENDPOINT` (e.g. `http://alloy:4318`) to also push them over OTLP/HTTP to an `otelcol.receiver.otlp`.
+- **Metrics**: Prometheus format at `GET /metrics` on the same port as the API (unauthenticated, so don't expose it publicly; block it at your ingress). Series: `http_server_request_total`, `http_server_request_duration_seconds` and `http_server_active_requests`, labelled by method, route pattern and status. Scrape with Prometheus or Alloy (`prometheus.scrape`).
+- **Logs**: JSON on stderr, including one line per request, for Alloy to collect from the container output.
 
 `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` set the resource attributes (default service name `tt-server`).
 
