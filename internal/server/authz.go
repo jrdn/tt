@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -121,7 +121,7 @@ func authorHandle(c *auth.Claims) string {
 
 func (s *authzStore) audit(ctx context.Context, c *auth.Claims, taskID, action string, detail map[string]any) {
 	if err := s.dir.RecordEvent(ctx, s.project, c, taskID, action, detail); err != nil {
-		log.Printf("audit %s %s/%s: %v", action, s.project.Slug, taskID, err)
+		slog.ErrorContext(ctx, "audit write failed", "action", action, "project", s.project.Slug, "task", taskID, "err", err)
 	}
 }
 

@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/codes"
 	"golang.org/x/oauth2"
 
 	"github.com/jrdn/tt/internal/api"
@@ -102,7 +103,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	select {
 	case <-s.hub.ready:
 	case <-time.After(5 * time.Second):
-		log.Printf("live events: not listening yet; clients may miss updates until it connects")
+		slog.WarnContext(ctx, "live events: not listening yet; clients may miss updates until it connects")
 	}
 	return s, nil
 }
@@ -163,10 +164,12 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			writeErr(w, http.StatusUnauthorized, "missing bearer token")
 			return
 		}
+		ctx, span := tracer.Start(r.Context(), "authenticate")
+		defer span.End()
 		var c *auth.Claims
 		var err error
 		if strings.HasPrefix(bearer, auth.KeyPrefix) {
-			c, _, err = s.dir.ClaimsForKey(r.Context(), bearer, s.now())
+			c, _, err = s.dir.ClaimsForKey(ctx, bearer, s.now())
 			if err == nil {
 				c.IssuedAt = nil // not a signed token; revoked_before doesn't apply
 			}
@@ -177,12 +180,15 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			}
 		}
 		if err == nil {
-			err = s.dir.CheckLive(r.Context(), c)
+			err = s.dir.CheckLive(ctx, c)
 		}
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "authentication failed")
 			writeError(w, err)
 			return
 		}
+		span.End() // the handler's own spans are siblings, not children
 		next.ServeHTTP(w, r.WithContext(auth.WithClaims(r.Context(), c)))
 	})
 }
