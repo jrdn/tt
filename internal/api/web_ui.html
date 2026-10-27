@@ -32,7 +32,7 @@ try { var t = localStorage.getItem('tt-theme'); if (t === 'light' || t === 'dark
 html, body { height: 100%; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  font-size: 13px;
+  font-size: 14px;
   background: var(--bg-muted);
   color: var(--text);
   display: flex;
@@ -64,9 +64,10 @@ header h1 {
   border: 1px solid rgba(255,255,255,0.15);
   border-radius: 6px;
   color: #cdd6f4;
-  font-size: 12px;
+  font-size: 13px;
   font-family: inherit;
-  padding: 5px 12px;
+  padding: 7px 18px;
+  min-width: 96px;
   cursor: pointer;
   transition: background 0.1s;
 }
@@ -78,7 +79,8 @@ header h1 {
   position: fixed;
   top: 52px;
   right: 12px;
-  width: 340px;
+  width: 480px;
+  max-width: calc(100vw - 24px);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -99,7 +101,7 @@ header h1 {
 }
 .recent-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 9px 14px;
   cursor: pointer;
@@ -108,20 +110,34 @@ header h1 {
 }
 .recent-row:last-child { border-bottom: none; }
 .recent-row:hover { background: var(--hover); }
+.recent-row-main { flex: 1; min-width: 0; }
 .recent-row-title {
-  flex: 1;
-  font-size: 12px;
+  display: block;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.recent-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.recent-row-meta .project-chip { flex-shrink: 0; }
+.recent-row-assignee { overflow: hidden; text-overflow: ellipsis; }
 .recent-row-time {
   font-size: 11px;
   color: var(--text-faint);
   white-space: nowrap;
   flex-shrink: 0;
+  margin-top: 2px;
 }
 
 /* ── Layout ── */
@@ -238,7 +254,7 @@ aside {
 }
 .task-item:hover { background: var(--hover); }
 .task-item.active { background: var(--active-bg); border-left: 3px solid #4f46e5; padding-left: 11px; }
-.task-item-title { font-size: 13px; font-weight: 500; line-height: 1.4; margin-bottom: 5px; }
+.task-item-title { font-size: 14px; font-weight: 500; line-height: 1.4; margin-bottom: 5px; }
 .task-item-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
 
 /* ── Badges & indicators ── */
@@ -272,7 +288,7 @@ main {
 
 /* ── Task detail ── */
 .task-detail {
-  max-width: 780px;
+  max-width: 1100px;
   margin: 0 auto;
   padding: 28px 32px 80px;
 }
@@ -432,7 +448,7 @@ main {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.75;
 }
 .md-body p { margin-bottom: 0.8em; }
@@ -451,11 +467,11 @@ main {
 .md-body hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
 .desc-edit-area {
   width: 100%;
-  min-height: 120px;
+  min-height: 160px;
   border: 1px solid #4f46e5;
   border-radius: 8px;
   padding: 12px 14px;
-  font-size: 13px;
+  font-size: 14px;
   font-family: inherit;
   resize: vertical;
   outline: none;
@@ -581,7 +597,7 @@ main {
 }
 .comment-author { font-weight: 600; color: var(--text-2); font-size: 12px; }
 .comment-id { font-family: monospace; font-size: 10px; color: var(--text-faint2); }
-.comment-body { font-size: 13px; line-height: 1.6; }
+.comment-body { font-size: 14px; line-height: 1.6; }
 .comment-body p { margin-bottom: 0.5em; }
 .comment-body p:last-child { margin-bottom: 0; }
 .comment-body code { background: var(--bg-muted); padding: 1px 5px; border-radius: 3px; font-size: 12px; font-family: monospace; }
@@ -601,10 +617,10 @@ main {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: 14px;
   font-family: inherit;
   resize: vertical;
-  min-height: 80px;
+  min-height: 90px;
   outline: none;
   color: var(--text);
   background: var(--input-bg);
@@ -763,7 +779,7 @@ main {
 .form-input:focus { border-color: #4f46e5; background: var(--surface); }
 .form-textarea {
   resize: vertical;
-  min-height: 80px;
+  min-height: 150px;
 }
 .form-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
 .form-select {
@@ -949,6 +965,10 @@ const ALL_PROJECTS = 'all';
 let PROJECTS = [];
 let ALL = false;
 let selectedProject = null;
+// CURRENT_PROJECT is the project the UI is scoped to in single-project mode,
+// so rows and chips can name it even though single-project task JSON has no
+// _project field. Null when no server project is selected.
+let CURRENT_PROJECT = null;
 
 function projBase(slug) { return '/api/v1/projects/' + encodeURIComponent(slug); }
 function projName(slug) {
@@ -970,6 +990,7 @@ async function setupProject() {
   const want = new URLSearchParams(location.search).get('project');
   const choice = valid(want) ? want : valid(stored) ? stored : PROJECTS[0].slug;
   ALL = choice === ALL_PROJECTS;
+  CURRENT_PROJECT = ALL ? null : choice;
   if (!ALL) API = projBase(choice);
   const sel = document.getElementById('project-select');
   sel.innerHTML = (PROJECTS.length > 1 ? `<option value="${ALL_PROJECTS}"${ALL ? ' selected' : ''}>All projects</option>` : '') +
@@ -1875,12 +1896,20 @@ async function loadRecent() {
   try {
     let tasks = await fetchTasks('/tasks/recent');
     if (ALL) tasks = tasks.sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 20);
-    list.innerHTML = tasks.map(t => `
+    list.innerHTML = tasks.map(t => {
+      const proj = t._project || CURRENT_PROJECT || '';
+      const meta = (proj ? `<span class="project-chip">${esc(projName(proj))}</span>` : '') +
+        (t.assignee ? `<span class="recent-row-assignee">@${esc(t.assignee)}</span>` : '');
+      return `
       <div class="recent-row" onclick="closeRecent(); selectTask('${esc(t.id)}', '${ALL ? esc(t._project) : ''}')">
         <span class="badge" style="background:${STATUS_COLORS[t.status]||'#9ca3af'};flex-shrink:0">${esc(STATUS_LABELS[t.status]||t.status)}</span>
-        <span class="recent-row-title">${esc(t.title)}</span>
+        <span class="recent-row-main">
+          <span class="recent-row-title" title="${esc(t.title)}">${esc(t.title)}</span>
+          <span class="recent-row-meta">${meta}</span>
+        </span>
         <span class="recent-row-time">${timeAgo(t.updated_at)}</span>
-      </div>`).join('') || '<div style="padding:10px 14px;font-size:12px;color:#9ca3af">No tasks</div>';
+      </div>`;
+    }).join('') || '<div style="padding:10px 14px;font-size:12px;color:#9ca3af">No tasks</div>';
   } catch (_) {
     list.innerHTML = '<div style="padding:10px 14px;font-size:12px;color:#ef4444">Failed to load</div>';
   }

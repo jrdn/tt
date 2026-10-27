@@ -294,6 +294,46 @@ func TestServerModeCommentBoxShowsLoggedInUser(t *testing.T) {
 	}
 }
 
+// TestRecentPopupShowsProjectAndAssignee checks the recent list names the
+// project and assignee of each task, not just its title.
+func TestRecentPopupShowsProjectAndAssignee(t *testing.T) {
+	ctx, url := newServerModeBrowser(t)
+	var rows string
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url),
+		chromedp.Poll(`document.querySelector('.task-item') !== null`, nil),
+		chromedp.Evaluate(`toggleRecent()`, nil),
+		chromedp.Poll(`document.querySelector('.recent-row') !== null`, nil),
+		chromedp.Evaluate(`document.querySelector('.recent-row').innerText`, &rows),
+	); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"alpha task", "Alpha", "@bot-alpha"} {
+		if !strings.Contains(rows, want) {
+			t.Errorf("recent row missing %q: %q", want, rows)
+		}
+	}
+}
+
+// TestNewTaskDescriptionIsTall checks the new-ticket description box opens a
+// few lines tall instead of the old one-line stub.
+func TestNewTaskDescriptionIsTall(t *testing.T) {
+	ctx, url := newBrowser(t)
+	var height float64
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url),
+		chromedp.WaitVisible(`button[onclick="openNewTask()"]`),
+		chromedp.Evaluate(`openNewTask()`, nil),
+		chromedp.Poll(`document.getElementById('new-task-overlay').classList.contains('open')`, nil),
+		chromedp.Evaluate(`document.getElementById('nt-desc').getBoundingClientRect().height`, &height),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if height < 140 {
+		t.Errorf("description box height = %.0fpx, want at least 140px", height)
+	}
+}
+
 // TestLocalModeCommentBoxStillAsks checks local tt web keeps the author field.
 func TestLocalModeCommentBoxStillAsks(t *testing.T) {
 	ctx, url := newBrowser(t)

@@ -13,7 +13,13 @@ import (
 
 	"github.com/jrdn/tt/internal/task"
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
 )
+
+// md renders markdown for the web UI. Linkify turns bare URLs in
+// descriptions and comments into anchors, which is what people expect when
+// they paste a link.
+var md = goldmark.New(goldmark.WithExtensions(extension.Linkify))
 
 //go:embed web_ui.html
 var webUI string
@@ -73,7 +79,7 @@ func writeStoreErr(w http.ResponseWriter, code int, err error) {
 
 func mdToHTML(s string) string {
 	var buf bytes.Buffer
-	if err := goldmark.Convert([]byte(s), &buf); err != nil {
+	if err := md.Convert([]byte(s), &buf); err != nil {
 		return s
 	}
 	return buf.String()
