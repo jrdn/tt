@@ -41,6 +41,7 @@ type Server struct {
 func (s *Server) Register(mux *http.ServeMux, prefix string) {
 	mux.HandleFunc("GET "+prefix+"/search", s.handleSearch)
 	mux.HandleFunc("GET "+prefix+"/tasks/recent", s.handleRecentTasks)
+	mux.HandleFunc("GET "+prefix+"/activity", s.handleActivity)
 	mux.HandleFunc("POST "+prefix+"/tasks", s.handleCreateTask)
 	mux.HandleFunc("GET "+prefix+"/tasks", s.handleListTasks)
 	mux.HandleFunc("GET "+prefix+"/tasks/{id}", s.handleGetTask)
@@ -452,6 +453,34 @@ func (s *Server) handleRecentTasks(w http.ResponseWriter, r *http.Request) {
 		tasks = []task.Task{}
 	}
 	writeJSON(w, map[string]any{"tasks": tasks})
+}
+
+// handleActivity returns the project's recent activity feed: comments, new
+// tickets and changes, newest first. Stores that keep no history (or can't
+// report one) answer 501, which the web UI treats as "no feed here".
+func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
+	st, ok := s.store(w, r)
+	if !ok {
+		return
+	}
+	reader, ok := st.(task.ActivityReader)
+	if !ok {
+		writeErr(w, http.StatusNotImplemented, "this store has no activity feed")
+		return
+	}
+	limit := 30
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 100 {
+		limit = n
+	}
+	acts, err := reader.Activity(r.Context(), limit)
+	if err != nil {
+		writeStoreErr(w, 500, err)
+		return
+	}
+	if acts == nil {
+		acts = []task.Activity{}
+	}
+	writeJSON(w, map[string]any{"activity": acts})
 }
 
 // handleNext claims the next ready task for a handle; the body is the task

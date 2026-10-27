@@ -96,6 +96,18 @@ func (s *Store) Recent(ctx context.Context, limit int) ([]task.Task, error) {
 	return resp.Tasks, err
 }
 
+// Activity forwards to the server's activity feed.
+func (s *Store) Activity(ctx context.Context, limit int) ([]task.Activity, error) {
+	var resp struct {
+		Activity []task.Activity `json:"activity"`
+	}
+	err := s.c.Do(ctx, "GET", s.base+"/activity?limit="+strconv.Itoa(limit), nil, &resp)
+	if resp.Activity == nil {
+		resp.Activity = []task.Activity{}
+	}
+	return resp.Activity, err
+}
+
 func (s *Store) Update(ctx context.Context, prefix string, opts task.UpdateOpts) (*task.Task, error) {
 	body := map[string]any{}
 	if opts.Status != nil {
