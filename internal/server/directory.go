@@ -343,6 +343,25 @@ func (d *Directory) RemoveMember(ctx context.Context, project *Project, principa
 	return d.RevokeTokens(ctx, principal.ID)
 }
 
+// Member is one principal's membership in a project.
+type Member struct {
+	Handle string `db:"handle" json:"handle"`
+	Kind   string `db:"kind" json:"kind"`
+	Role   string `db:"role" json:"role"`
+}
+
+// Members lists a project's members, owners first, then by handle.
+func (d *Directory) Members(ctx context.Context, project *Project) ([]Member, error) {
+	ms := []Member{}
+	err := d.db.SelectContext(ctx, &ms, `SELECT p.handle AS handle, p.kind AS kind, m.role AS role
+		FROM project_members m
+		JOIN principals p ON p.id = m.principal_id
+		WHERE m.project_id = $1
+		ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'member' THEN 1 ELSE 2 END, p.handle`,
+		project.ID)
+	return ms, err
+}
+
 // Roles returns the principal's role in each project, keyed by slug. Agents
 // get their owner's roles.
 func (d *Directory) Roles(ctx context.Context, p *Principal) (map[string]auth.Role, error) {
