@@ -151,6 +151,7 @@ After that every command (`tt ls`, `tt add`, `tt next`, `tt tui`, `tt web`, …)
 tt whoami                               # your handle, projects and roles
 tt project ls                           # projects you can access
 tt project create myproj                # server admins
+tt project member myproj                # list a project's members and roles
 tt project member myproj alice member   # owners: viewer | member | owner, or --remove
 tt export > backup.json                 # every task with comments and relations
 tt logout                               # revokes the key and forgets it

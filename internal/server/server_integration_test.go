@@ -136,6 +136,20 @@ func TestServer_EndToEnd(t *testing.T) {
 	b.must(403, "POST", "/api/v1/projects/tt/tasks", map[string]string{"title": "nope"})
 	b.must(403, "PUT", "/api/v1/projects/tt/members/bob", map[string]string{"role": "owner"})
 
+	// The roster is readable by any member: owners first, viewers included.
+	roster := b.must(200, "GET", "/api/v1/projects/tt/members", nil)
+	var handles, roles []string
+	for _, m := range roster["members"].([]any) {
+		entry := m.(map[string]any)
+		handles = append(handles, entry["handle"].(string))
+		roles = append(roles, entry["role"].(string))
+	}
+	if strings.Join(handles, ",") != "alice,bob" || strings.Join(roles, ",") != "owner,viewer" {
+		t.Errorf("members = %v/%v, want alice,bob as owner,viewer", handles, roles)
+	}
+	// Strangers still see nothing.
+	anon.as("tt_ak_garbage").must(401, "GET", "/api/v1/projects/tt/members", nil)
+
 	// Alice creates an agent and a key for it.
 	aRaw.must(201, "POST", "/api/v1/agents", map[string]string{"handle": "claude/opus4.7"})
 	agentKey := aRaw.must(201, "POST", "/api/v1/keys", map[string]any{"agent": "claude/opus4.7", "name": "laptop"})["key"].(string)

@@ -405,16 +405,50 @@ func newProjectCmd() *cobra.Command {
 		},
 	}
 
+	member := projectMemberCmd(&server)
+
+	cmd.AddCommand(create, ls, member)
+	return cmd
+}
+
+// projectMemberCmd builds `tt project member`: one argument lists the roster,
+// two or three set a member's role, and --remove clears it.
+func projectMemberCmd(server *string) *cobra.Command {
 	var remove bool
 	member := &cobra.Command{
-		Use:     "member <slug> <handle> [viewer|member|owner]",
-		Short:   "Add, change or remove a project member (project owners)",
-		Example: "  tt project member tt alice member\n  tt project member tt alice --remove",
-		Args:    cobra.RangeArgs(2, 3),
+		Use:   "member <slug> [<handle> [viewer|member|owner]]",
+		Short: "List, add, change or remove project members",
+		Long: "List a project's members, or add, change and remove them.\n\n" +
+			"One argument lists the roster; two or three set a member's role, and\n" +
+			"--remove deletes it. Changing roles needs the project:admin right.",
+		Example: "  tt project member tt\n  tt project member tt alice member\n  tt project member tt alice --remove",
+		Args:    cobra.RangeArgs(1, 3),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := serverClient(server)
+			c, err := serverClient(*server)
 			if err != nil {
 				return err
+			}
+			if len(args) == 1 {
+				var resp struct {
+					Project string `json:"project"`
+					Members []struct {
+						Handle string `json:"handle"`
+						Kind   string `json:"kind"`
+						Role   string `json:"role"`
+					} `json:"members"`
+				}
+				if err := c.Do(cmd.Context(), "GET", "/api/v1/projects/"+args[0]+"/members", nil, &resp); err != nil {
+					return err
+				}
+				if jsonOutput {
+					return printJSON(resp.Members)
+				}
+				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				fmt.Fprintln(w, "HANDLE	KIND	ROLE")
+				for _, m := range resp.Members {
+					fmt.Fprintf(w, "%s	%s	%s\n", m.Handle, m.Kind, m.Role)
+				}
+				return w.Flush()
 			}
 			path := "/api/v1/projects/" + args[0] + "/members/" + args[1]
 			if remove {
@@ -435,9 +469,7 @@ func newProjectCmd() *cobra.Command {
 		},
 	}
 	member.Flags().BoolVar(&remove, "remove", false, "Remove the member")
-
-	cmd.AddCommand(create, ls, member)
-	return cmd
+	return member
 }
 
 // addServerKeyCmds adds the server-backed subcommands to `tt key`.
