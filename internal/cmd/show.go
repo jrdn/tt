@@ -34,8 +34,9 @@ func newShowCmd() *cobra.Command {
 		Long: `Show full task details.
 
 The ID can be a plain task ID (resolved in the current repo's database)
-or a qualified ID in the form <db_name>.<task_id> to look up in a
-specific database (e.g. "myrepo.a3B7xK").`,
+or a qualified ID in the form <project>.<task_id> (or <project>:<task_id>)
+to look up a task in another project (e.g. "tt.1hde6nf"). On a tt server
+the prefix names the project; against a local database it names the database.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			qt, err := resolveTask(args[0])

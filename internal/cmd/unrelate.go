@@ -12,7 +12,7 @@ func newUnrelateCmd() *cobra.Command {
 		Short: "Remove a relation between tasks",
 		Long: `Remove a relation between tasks.
 
-Each ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
+Each ID can be a plain task ID or a qualified ID (<project>.<task_id> or <project>:<task_id>).`,
 		Args:  cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			relType := args[1]

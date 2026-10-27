@@ -17,7 +17,7 @@ func newClaimCmd() *cobra.Command {
 		Short: "Set a task in_progress and assign it to yourself",
 		Long: `Set a task in_progress and assign it to yourself.
 
-The ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
+The ID can be a plain task ID or a qualified ID (<project>.<task_id> or <project>:<task_id>).`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			qt, err := resolveTask(args[0])

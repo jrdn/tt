@@ -13,7 +13,7 @@ func newCancelCmd() *cobra.Command {
 		Short: "Mark one or more tasks as cancelled",
 		Long: `Mark one or more tasks as cancelled.
 
-Each ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
+Each ID can be a plain task ID or a qualified ID (<project>.<task_id> or <project>:<task_id>).`,
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			status := task.StatusCancelled
