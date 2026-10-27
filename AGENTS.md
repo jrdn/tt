@@ -10,9 +10,9 @@ mise run test:ui      # headless-Chrome tests for the web UI (skipped without Ch
 and `mise run test:e2e` drives the real binary end to end.
 
 CI (`.github/workflows/test.yml`) runs all of these on every pull request to
-`main`: vet and unit tests, the web UI tests, and the integration suite against
-a Postgres 17 service container. The end-to-end job is advisory until it has a
-green record on `main` — a failure there is reported but does not block a PR.
+`main`: vet and unit tests, the web UI tests, the integration suite and the
+end-to-end suite, each against a Postgres 17 service container where one is
+needed.
 
 ## tt Task Manager
 

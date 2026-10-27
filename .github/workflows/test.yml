@@ -72,12 +72,10 @@ jobs:
       - name: Integration tests
         run: go test -tags integration -count=1 ./internal/task/... ./internal/server/... ./internal/client/...
 
-  # End-to-end parity tests build the real binary and drive it against both
-  # SQLite and a tt server. Advisory for now: reported, but it does not fail
-  # the run until it has a green record on main.
+  # End-to-end parity tests: build the real binary and drive it against both
+  # SQLite and a tt server, so this covers the whole CLI surface.
   e2e:
     runs-on: ubuntu-latest
-    continue-on-error: true
     services:
       postgres:
         image: postgres:17
