@@ -472,29 +472,42 @@ main {
 }
 .btn-link:hover { background: var(--active-bg); }
 
-/* ── Description / markdown body ── */
+/* ── Markdown body (description and comments) ── */
+.md-body, .comment-body {
+  font-size: 14px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;   /* long URLs must not push the layout wide */
+}
 .md-body {
   padding: 14px 16px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
-  font-size: 14px;
-  line-height: 1.75;
 }
-.md-body p { margin-bottom: 0.8em; }
-.md-body p:last-child { margin-bottom: 0; }
-.md-body h1,.md-body h2,.md-body h3 { font-weight: 700; margin: 1em 0 0.4em; }
-.md-body ul,.md-body ol { margin: 0 0 0.8em 1.6em; }
-.md-body li { margin-bottom: 0.2em; }
-.md-body code { background: var(--bg-muted); padding: 1px 5px; border-radius: 3px; font-size: 12px; font-family: monospace; }
-.md-body pre { background: #1e1e2e; color: #cdd6f4; padding: 14px 16px; border-radius: 6px; overflow-x: auto; margin-bottom: 0.8em; }
-.md-body pre code { background: none; padding: 0; color: inherit; font-size: 12px; }
-.md-body blockquote { border-left: 3px solid var(--border); padding-left: 12px; color: var(--text-dim); margin-bottom: 0.8em; }
-.md-body a { color: #4f46e5; }
-.md-body table { border-collapse: collapse; width: 100%; margin-bottom: 0.8em; }
-.md-body th,.md-body td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
-.md-body th { background: var(--hover); font-weight: 600; }
-.md-body hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
+.md-body p, .comment-body p { margin-bottom: 0.8em; }
+.md-body p:last-child, .comment-body p:last-child { margin-bottom: 0; }
+.md-body h1,.md-body h2,.md-body h3,
+.comment-body h1,.comment-body h2,.comment-body h3 { font-weight: 700; margin: 1em 0 0.4em; line-height: 1.3; }
+.md-body h1, .comment-body h1 { font-size: 18px; }
+.md-body h2, .comment-body h2 { font-size: 16px; }
+.md-body h3, .comment-body h3 { font-size: 14px; }
+.md-body h1:first-child, .md-body h2:first-child, .md-body h3:first-child,
+.comment-body h1:first-child, .comment-body h2:first-child, .comment-body h3:first-child { margin-top: 0; }
+.md-body ul,.md-body ol,
+.comment-body ul,.comment-body ol { margin: 0 0 0.8em 1.6em; }
+.md-body li, .comment-body li { margin-bottom: 0.2em; }
+.md-body code, .comment-body code { background: var(--bg-muted); padding: 1px 5px; border-radius: 3px; font-size: 12px; font-family: monospace; }
+.md-body pre, .comment-body pre { background: #1e1e2e; color: #cdd6f4; padding: 14px 16px; border-radius: 6px; overflow-x: auto; margin-bottom: 0.8em; }
+.md-body pre code, .comment-body pre code { background: none; padding: 0; color: inherit; font-size: 12px; }
+.md-body blockquote, .comment-body blockquote { border-left: 3px solid var(--border); padding-left: 12px; color: var(--text-dim); margin-bottom: 0.8em; }
+.md-body a, .comment-body a { color: #4f46e5; }
+.md-body table, .comment-body table { border-collapse: collapse; width: 100%; margin-bottom: 0.8em; }
+.md-body th,.md-body td,
+.comment-body th,.comment-body td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+.md-body th, .comment-body th { background: var(--hover); font-weight: 600; }
+.md-body hr, .comment-body hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
+.md-body del, .comment-body del { color: var(--text-faint); }
+.md-body input[type=checkbox], .comment-body input[type=checkbox] { margin-right: 5px; }
 .desc-edit-area {
   width: 100%;
   min-height: 160px;
@@ -627,12 +640,7 @@ main {
 }
 .comment-author { font-weight: 600; color: var(--text-2); font-size: 12px; }
 .comment-id { font-family: monospace; font-size: 10px; color: var(--text-faint2); }
-.comment-body { font-size: 14px; line-height: 1.6; }
-.comment-body p { margin-bottom: 0.5em; }
-.comment-body p:last-child { margin-bottom: 0; }
-.comment-body code { background: var(--bg-muted); padding: 1px 5px; border-radius: 3px; font-size: 12px; font-family: monospace; }
-.comment-body pre { background: #1e1e2e; color: #cdd6f4; padding: 12px; border-radius: 6px; overflow-x: auto; margin-bottom: 0.5em; }
-.comment-body pre code { background: none; color: inherit; }
+/* typography for .comment-body lives with .md-body above */
 
 /* ── Add comment ── */
 .add-comment {

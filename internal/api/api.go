@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,10 +17,14 @@ import (
 	"github.com/yuin/goldmark/extension"
 )
 
-// md renders markdown for the web UI. Linkify turns bare URLs in
-// descriptions and comments into anchors, which is what people expect when
-// they paste a link.
-var md = goldmark.New(goldmark.WithExtensions(extension.Linkify))
+// md renders markdown for the web UI. GFM adds the syntax people actually
+// type in a tracker — tables, strikethrough, task lists — and its Linkify
+// extension turns bare URLs in descriptions and comments into anchors, which
+// is what they expect when they paste a link.
+var md = goldmark.New(goldmark.WithExtensions(extension.GFM))
+
+// anchorHref matches the anchors goldmark emits for links and autolinks.
+var anchorHref = regexp.MustCompile(`<a href="([^"]*)"`)
 
 //go:embed web_ui.html
 var webUI string
@@ -82,7 +87,10 @@ func mdToHTML(s string) string {
 	if err := md.Convert([]byte(s), &buf); err != nil {
 		return s
 	}
-	return buf.String()
+	// Goldmark has no renderer option for link targets, so rewrite the
+	// anchors: following a link from the single-page UI should not throw
+	// away the view the reader was looking at.
+	return anchorHref.ReplaceAllString(buf.String(), `<a href="$1" target="_blank" rel="noopener noreferrer"`)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
