@@ -334,6 +334,67 @@ func TestNewTaskDescriptionIsTall(t *testing.T) {
 	}
 }
 
+// TestNewTaskModalIsRoomy checks the new-ticket popup is wider than the old
+// cramped 500px card and never taller than the viewport.
+func TestNewTaskModalIsRoomy(t *testing.T) {
+	ctx, url := newBrowser(t)
+	var width, height float64
+	var vh float64
+	if err := chromedp.Run(ctx,
+		emulation.SetDeviceMetricsOverride(1280, 800, 1, false),
+		chromedp.Navigate(url),
+		chromedp.WaitVisible(`button[onclick="openNewTask()"]`),
+		chromedp.Evaluate(`openNewTask()`, nil),
+		chromedp.Poll(`document.getElementById('new-task-overlay').classList.contains('open')`, nil),
+		chromedp.Evaluate(`document.querySelector('.modal').getBoundingClientRect().width`, &width),
+		chromedp.Evaluate(`document.querySelector('.modal').getBoundingClientRect().height`, &height),
+		chromedp.Evaluate(`window.innerHeight`, &vh),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if width < 640 {
+		t.Errorf("new task modal width = %.0fpx, want at least 640px", width)
+	}
+	if height > vh {
+		t.Errorf("new task modal height = %.0fpx, want it to fit in the %.0fpx viewport", height, vh)
+	}
+}
+
+// TestSidebarSplitterResizes checks the divider between the task list and the
+// detail pane can be dragged, clamps sensibly, and remembers the width.
+func TestSidebarSplitterResizes(t *testing.T) {
+	ctx, url := newBrowser(t)
+	var before, after float64
+	var stored string
+	if err := chromedp.Run(ctx,
+		emulation.SetDeviceMetricsOverride(1280, 800, 1, false),
+		chromedp.Navigate(url),
+		chromedp.WaitVisible("#splitter"),
+		chromedp.Evaluate(`(localStorage.removeItem('tt-sidebar-width'), document.querySelector('.layout aside').getBoundingClientRect().width)`, &before),
+		chromedp.Evaluate(`(() => {
+			const bar = document.getElementById('splitter');
+			const aside = document.querySelector('.layout aside');
+			const left = aside.getBoundingClientRect().left;
+			bar.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true, clientX: left + aside.getBoundingClientRect().width}));
+			window.dispatchEvent(new PointerEvent('pointermove', {bubbles: true, clientX: left + 480}));
+			window.dispatchEvent(new PointerEvent('pointerup', {bubbles: true}));
+		})()`, nil),
+		chromedp.Evaluate(`document.querySelector('.layout aside').getBoundingClientRect().width`, &after),
+		chromedp.Evaluate(`localStorage.getItem('tt-sidebar-width') || ''`, &stored),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if after < before+100 {
+		t.Errorf("sidebar width after dragging = %.0fpx, want it wider than the %.0fpx default", after, before)
+	}
+	if after > 640 {
+		t.Errorf("sidebar width after dragging = %.0fpx, want it clamped at 640px", after)
+	}
+	if stored == "" {
+		t.Error("sidebar width was not remembered in localStorage")
+	}
+}
+
 // TestLocalModeCommentBoxStillAsks checks local tt web keeps the author field.
 func TestLocalModeCommentBoxStillAsks(t *testing.T) {
 	ctx, url := newBrowser(t)
