@@ -162,6 +162,41 @@ func TestDashboardShowsStatusCounts(t *testing.T) {
 	}
 }
 
+// TestDashboardShowsActivityFeed checks the dashboard renders the feed: the
+// ticket, what happened, and a comment's text.
+func TestDashboardShowsActivityFeed(t *testing.T) {
+	ctx, url := newBrowser(t)
+	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitVisible("#dash-btn")); err != nil {
+		t.Fatal(err)
+	}
+	await := func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }
+	var id string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(
+		`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title:'feed task'})}).then(r => r.json()).then(t => t.id)`,
+		&id, await)); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	var commented bool
+	if err := chromedp.Run(ctx, chromedp.Evaluate(
+		`fetch('/api/tasks/`+id+`/comments', {method:'POST', body: JSON.stringify({body:'looked into it', author:'jrdn'})}).then(r => r.ok)`,
+		&commented, await)); err != nil || !commented {
+		t.Fatalf("comment: %v %v", commented, err)
+	}
+	var text string
+	if err := chromedp.Run(ctx,
+		chromedp.Click("#dash-btn", chromedp.ByID),
+		chromedp.Poll(`document.querySelectorAll('#dash-activity-rows .activity-row').length >= 2`, nil),
+		chromedp.Evaluate(`document.getElementById('dash-activity-rows').innerText`, &text),
+	); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"feed task", "COMMENT", "looked into it", "@jrdn"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("activity feed missing %q: %q", want, text)
+		}
+	}
+}
+
 func TestDashboardIssueTableFilters(t *testing.T) {
 	ctx, url := newBrowser(t)
 	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitVisible("#dash-btn")); err != nil {
@@ -213,7 +248,11 @@ func newServerModeBrowser(t *testing.T) (context.Context, string) {
 		t.Cleanup(func() { d.Close() })
 		st := task.NewSQLStore(d)
 		who := "bot-" + slug
-		if _, err := st.Create(context.Background(), slug+" task", task.CreateOpts{Assignee: &who}); err != nil {
+		tsk, err := st.Create(context.Background(), slug+" task", task.CreateOpts{Assignee: &who})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.AddComment(context.Background(), tsk.ID, "working on it", &who); err != nil {
 			t.Fatal(err)
 		}
 		stores[slug] = st
@@ -305,13 +344,15 @@ func TestRecentPopupShowsProjectAndAssignee(t *testing.T) {
 		chromedp.Poll(`document.querySelector('.task-item') !== null`, nil),
 		chromedp.Evaluate(`toggleRecent()`, nil),
 		chromedp.Poll(`document.querySelector('.recent-row') !== null`, nil),
-		chromedp.Evaluate(`document.querySelector('.recent-row').innerText`, &rows),
+		chromedp.Evaluate(`document.getElementById('recent-list').innerText`, &rows),
 	); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"alpha task", "Alpha", "@bot-alpha"} {
+	// The popup is the activity feed: what happened, on which ticket, in
+	// which project, by whom.
+	for _, want := range []string{"alpha task", "Alpha", "@bot-alpha", "COMMENT", "CREATED"} {
 		if !strings.Contains(rows, want) {
-			t.Errorf("recent row missing %q: %q", want, rows)
+			t.Errorf("recent activity missing %q: %q", want, rows)
 		}
 	}
 }

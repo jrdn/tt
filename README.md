@@ -166,6 +166,8 @@ tt logout                               # revokes the key and forgets it
 
 The TUI and web UI refresh live when anyone changes a task. This also works locally: `tt tui` and `tt web` pick up writes from other processes, such as agents.
 
+The web UI's dashboard carries an **Activity** feed — the newest comments, new tasks and changes across the projects you can see — and the **Recent** button shows the same list. On a tt server it reads the audit log, so each entry says what happened (`moved to in_review`, `assigned to @jrdn`); a local database keeps no change history, so there the feed shows comments plus each task's creation and last update.
+
 ### Agents and API keys
 
 Agents act with their own identity, on behalf of the human who registered them:

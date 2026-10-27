@@ -831,3 +831,59 @@ func TestServer_AttenuatedKeyCannotMintKeys(t *testing.T) {
 	_, cappedKey, _ := srv.Directory().CreateKey(ctx, alice, alice, "", nil, auth.RoleViewer, time.Time{})
 	anon.as(cappedKey).must(403, "POST", "/api/v1/keys", map[string]any{})
 }
+
+func TestServer_ActivityFeed(t *testing.T) {
+	srv, hs := newTestServer(t)
+	ctx := context.Background()
+	dir := srv.Directory()
+	anon := &client{t: t, base: hs.URL}
+
+	alice, _ := dir.CreateUser(ctx, "alice", nil, true)
+	_, aliceKey, _ := dir.CreateKey(ctx, alice, alice, "", nil, "", time.Time{})
+	a := anon.as(aliceKey)
+	a.must(201, "POST", "/api/v1/projects", map[string]string{"slug": "tt", "name": "tt"})
+
+	created := a.must(201, "POST", "/api/v1/projects/tt/tasks", map[string]string{"title": "feed me"})
+	id := created["id"].(string)
+	a.must(201, "POST", "/api/v1/projects/tt/tasks/"+id+"/comments", map[string]string{"body": "on it"})
+	a.must(200, "PATCH", "/api/v1/projects/tt/tasks/"+id, map[string]string{"status": "in_progress"})
+
+	feed := a.must(200, "GET", "/api/v1/projects/tt/activity?limit=10", nil)
+	entries, _ := feed["activity"].([]any)
+	if len(entries) != 3 {
+		t.Fatalf("activity = %v, want created + comment + status", feed["activity"])
+	}
+	byKind := map[string]map[string]any{}
+	for _, e := range entries {
+		entry := e.(map[string]any)
+		byKind[entry["kind"].(string)] = entry
+		if entry["task_id"] != id || entry["task_title"] != "feed me" || entry["actor"] != "alice" {
+			t.Errorf("entry = %v", entry)
+		}
+		at, _ := entry["at"].(string)
+		if !strings.HasSuffix(at, "Z") {
+			t.Errorf("timestamp %q was not normalized to RFC 3339 UTC", at)
+		}
+	}
+	if _, ok := byKind["created"]; !ok {
+		t.Errorf("no created entry: %v", byKind)
+	}
+	if c := byKind["comment"]; c == nil || c["body"] != "on it" {
+		t.Errorf("comment entry = %v, want the comment body", byKind["comment"])
+	}
+	if st := byKind["status"]; st == nil {
+		t.Errorf("no status entry: %v", byKind)
+	} else if detail, _ := st["detail"].(map[string]any); detail["status"] != "in_progress" {
+		t.Errorf("status detail = %v, want the new status", st["detail"])
+	}
+
+	// Newest first: the status change was the last write.
+	if kind := entries[0].(map[string]any)["kind"]; kind != "status" {
+		t.Errorf("first entry = %v, want the status change", kind)
+	}
+
+	// A non-member sees nothing.
+	bob, _ := dir.CreateUser(ctx, "bob", nil, false)
+	_, bobKey, _ := dir.CreateKey(ctx, bob, bob, "", nil, "", time.Time{})
+	anon.as(bobKey).must(404, "GET", "/api/v1/projects/tt/activity", nil)
+}

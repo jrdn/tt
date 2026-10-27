@@ -140,6 +140,45 @@ header h1 {
   margin-top: 2px;
 }
 
+/* ── Activity feed ── */
+/* Shared by the Recent popup and the dashboard panel: a kind chip, the task,
+   and one line about what happened. */
+.activity-kind {
+  flex-shrink: 0;
+  margin-top: 1px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-dim);
+  background: var(--bg-muted);
+  border: 1px solid var(--border);
+}
+.activity-kind.kind-created { color: #16a34a; border-color: rgba(22,163,74,0.4); }
+.activity-kind.kind-comment { color: #2563eb; border-color: rgba(37,99,235,0.4); }
+.activity-kind.kind-status { color: #d97706; border-color: rgba(217,119,6,0.4); }
+.activity-kind.kind-assigned { color: #7c3aed; border-color: rgba(124,58,237,0.4); }
+.activity-line {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dash-activity { margin-top: 24px; }
+.dash-activity h2 { font-size: 14px; color: var(--text); margin-bottom: 10px; }
+.dash-activity-rows {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.dash-activity-rows .activity-row:last-child { border-bottom: none; }
+
 /* ── Layout ── */
 .layout {
   display: flex;
@@ -924,7 +963,7 @@ main {
 </div>
 
 <div class="recent-popup" id="recent-popup">
-  <div class="recent-popup-header">Recent updates</div>
+  <div class="recent-popup-header">Recent activity</div>
   <div id="recent-list"></div>
 </div>
 <div class="dashboard" id="dashboard"></div>
@@ -1078,6 +1117,80 @@ async function fetchTasks(path) {
     return ((await res.json()).tasks || []).map(t => Object.assign(t, {_project: p.slug}));
   }));
   return parts.flat();
+}
+
+// ── Activity feed ─────────────────────────────────────────
+// Every recent comment, new ticket and change, newest first. The Recent
+// popup and the dashboard's activity panel render the same feed.
+const ACTIVITY_LIMIT = 30;
+const ACTIVITY_LABELS = {
+  created: 'Created', comment: 'Comment', status: 'Status', updated: 'Updated',
+  assigned: 'Assigned', related: 'Relation', imported: 'Import',
+};
+
+// fetchActivity reads the feed for the projects in view, tagging every entry
+// with its project in all-projects mode. Backends without a feed (an old
+// server) answer 501 and simply contribute nothing.
+async function fetchActivity(limit = ACTIVITY_LIMIT) {
+  const path = '/activity?limit=' + limit;
+  if (!ALL) {
+    const res = await apiFetch(API + path);
+    if (!res.ok) return [];
+    return (await res.json()).activity || [];
+  }
+  const parts = await Promise.all(PROJECTS.map(async p => {
+    try {
+      const res = await apiFetch(projBase(p.slug) + path);
+      if (!res.ok) return [];
+      return ((await res.json()).activity || []).map(a => Object.assign({}, a, {_project: p.slug}));
+    } catch (_) { return []; }
+  }));
+  return parts.flat()
+    .sort((a, b) => String(b.at).localeCompare(String(a.at)))
+    .slice(0, limit);
+}
+
+// activityLine says what happened, in one short line.
+function activityLine(a) {
+  const d = a.detail || {};
+  if (a.kind === 'status' && d.status) return 'moved to ' + (STATUS_LABELS[d.status] || d.status);
+  if (a.kind === 'assigned' && d.assignee) return 'assigned to @' + d.assignee;
+  if (a.kind === 'related' && d.type) return d.type + (d.to ? ' ' + qidOf('', d.to) : '');
+  if (a.kind === 'updated') {
+    const parts = [];
+    if (d.status) parts.push('now ' + (STATUS_LABELS[d.status] || d.status));
+    if (d.assignee) parts.push('@' + d.assignee);
+    if (d.priority !== undefined) parts.push('priority ' + (PRI_LABELS[d.priority] || d.priority));
+    if (d.due_date) parts.push('due ' + d.due_date);
+    if (d.title) parts.push('retitled');
+    return parts.join(' · ');
+  }
+  if (a.kind === 'comment' && a.body) return a.body.replace(/\s+/g, ' ').trim();
+  return '';
+}
+
+function activityRow(a) {
+  const proj = a._project || CURRENT_PROJECT || '';
+  const meta = (proj ? `<span class="project-chip">${esc(projName(proj))}</span>` : '') +
+    `<span class="id-chip">${esc(qidOf(proj, a.task_id))}</span>` +
+    (a.actor ? `<span class="recent-row-assignee">@${esc(a.actor)}</span>` : '');
+  const line = activityLine(a);
+  const label = ACTIVITY_LABELS[a.kind] || a.kind;
+  return `
+    <div class="recent-row activity-row" onclick="openActivity('${esc(a.task_id)}', '${esc(a._project || '')}')">
+      <span class="activity-kind kind-${esc(a.kind)}">${esc(label)}</span>
+      <span class="recent-row-main">
+        <span class="recent-row-title" title="${esc(a.task_title)}">${esc(a.task_title)}</span>
+        <span class="recent-row-meta">${meta}</span>
+        ${line ? `<span class="activity-line" title="${esc(line)}">${esc(line)}</span>` : ''}
+      </span>
+      <span class="recent-row-time">${timeAgo(a.at)}</span>
+    </div>`;
+}
+
+function openActivity(id, project) {
+  closeRecent();
+  openIssue(id, project);
 }
 
 // ── Live refresh ───────────────────────────────────────────
@@ -1349,13 +1462,13 @@ async function loadDashboard() {
         return {p, tasks: (await res.json()).tasks || []};
       } catch (_) { return {p, tasks: null}; }
     }));
-    if (dashOpen) renderDashboard(results);
+    if (dashOpen) renderDashboard(results, await fetchActivity().catch(() => []));
   } catch (_) {
     el.innerHTML = '<div class="empty-state" style="color:#ef4444">Failed to load dashboard</div>';
   }
 }
 
-function renderDashboard(results) {
+function renderDashboard(results, activity = []) {
   const today = new Date().toISOString().slice(0, 10);
   const total = {};
   let overdue = 0, active = 0;
@@ -1392,11 +1505,16 @@ function renderDashboard(results) {
     stat(overdue, 'overdue');
   const el = document.getElementById('dashboard');
   if (!document.getElementById('dash-top')) {
-    el.innerHTML = '<div id="dash-top"></div><div class="dash-issues" id="dash-issues"></div>';
+    el.innerHTML = '<div id="dash-top"></div>' +
+      '<div class="dash-activity"><h2>Activity</h2><div class="dash-activity-rows" id="dash-activity-rows"></div></div>' +
+      '<div class="dash-issues" id="dash-issues"></div>';
     buildIssueShell();
   }
   document.getElementById('dash-top').innerHTML =
     `<div class="dash-totals">${totals}</div><div class="dash-grid">${cards.join('')}</div>`;
+  document.getElementById('dash-activity-rows').innerHTML = activity.length
+    ? activity.map(activityRow).join('')
+    : '<div class="dash-sub" style="padding:10px 14px">No activity yet</div>';
   dashTasks = results.flatMap(({p, tasks}) => (tasks || []).map(t => Object.assign({}, t, {_project: p.slug})));
   renderIssueFilters();
   renderIssues();
@@ -1973,23 +2091,9 @@ async function loadRecent() {
   const list = document.getElementById('recent-list');
   list.innerHTML = '<div style="padding:10px 14px;font-size:12px;color:#9ca3af">Loading…</div>';
   try {
-    let tasks = await fetchTasks('/tasks/recent');
-    if (ALL) tasks = tasks.sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 20);
-    list.innerHTML = tasks.map(t => {
-      const proj = t._project || CURRENT_PROJECT || '';
-      const meta = (proj ? `<span class="project-chip">${esc(projName(proj))}</span>` : '') +
-        `<span class="id-chip">${esc(qidOf(proj, t.id))}</span>` +
-        (t.assignee ? `<span class="recent-row-assignee">@${esc(t.assignee)}</span>` : '');
-      return `
-      <div class="recent-row" onclick="closeRecent(); selectTask('${esc(t.id)}', '${ALL ? esc(t._project) : ''}')">
-        <span class="badge" style="background:${STATUS_COLORS[t.status]||'#9ca3af'};flex-shrink:0">${esc(STATUS_LABELS[t.status]||t.status)}</span>
-        <span class="recent-row-main">
-          <span class="recent-row-title" title="${esc(t.title)}">${esc(t.title)}</span>
-          <span class="recent-row-meta">${meta}</span>
-        </span>
-        <span class="recent-row-time">${timeAgo(t.updated_at)}</span>
-      </div>`;
-    }).join('') || '<div style="padding:10px 14px;font-size:12px;color:#9ca3af">No tasks</div>';
+    const acts = await fetchActivity();
+    list.innerHTML = acts.map(activityRow).join('') ||
+      '<div style="padding:10px 14px;font-size:12px;color:#9ca3af">No activity yet</div>';
   } catch (_) {
     list.innerHTML = '<div style="padding:10px 14px;font-size:12px;color:#ef4444">Failed to load</div>';
   }
