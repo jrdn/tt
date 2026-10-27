@@ -4,6 +4,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -473,4 +474,81 @@ func TestStatusControlReadsAsDropdown(t *testing.T) {
 	if caretLeft < centre || caretLeft > selectLeft+selectWidth-2 {
 		t.Errorf("caret left edge = %.0f, want it right of centre (%.0f) and inside the control", caretLeft, centre)
 	}
+}
+
+// TestCommentMarkdownIsRenderedAndStaysInItsCard checks the two halves of the
+// comment formatting ticket: markdown (including GFM tables, strikethrough and
+// bare-URL links) renders in comments, and a long URL wraps inside the comment
+// card instead of widening the detail pane.
+func TestCommentMarkdownIsRenderedAndStaysInItsCard(t *testing.T) {
+	ctx, url := newBrowser(t)
+	longURL := "https://example.com/" + strings.Repeat("a-very-long-path-segment/", 12)
+	desc := "## Plan\n\n| step | who |\n| ---- | --- |\n| ship | me  |"
+	body := "look at " + longURL + "\n\n- [x] done\n\n~~old~~ **new**"
+
+	var table, del, strong, bulet, target string
+	var overflow []float64
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url),
+		chromedp.WaitVisible("#task-list"),
+		chromedp.Evaluate(`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title:'md task', description:`+
+			jsString(desc)+`})}).then(r => r.json())`, nil,
+			func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
+		chromedp.Evaluate(`loadTasks()`, nil),
+		chromedp.Poll(`document.querySelector('.task-item') !== null`, nil),
+		chromedp.Evaluate(`document.querySelector('.task-item').click()`, nil),
+		chromedp.Poll(`document.querySelector('#comment-body') !== null`, nil),
+		chromedp.Evaluate(`(() => {
+			const id = currentTaskData.task.id;
+			return fetch('/api/tasks/' + encodeURIComponent(id) + '/comments', {
+				method: 'POST',
+				body: JSON.stringify({body: `+jsString(body)+`, author: 'tester'})
+			}).then(r => r.ok);
+		})()`, nil, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
+		chromedp.Evaluate(`selectTask(currentTaskData.task.id)`, nil),
+		chromedp.Poll(`document.querySelector('.comment-body del') !== null`, nil),
+		chromedp.Evaluate(`document.querySelector('.md-body table') !== null ? 'yes' : 'no'`, &table),
+		chromedp.Evaluate(`document.querySelector('.comment-body del').textContent`, &del),
+		chromedp.Evaluate(`document.querySelector('.comment-body strong').textContent`, &strong),
+		chromedp.Evaluate(`document.querySelector('.comment-body li input[type=checkbox]') !== null ? 'yes' : 'no'`, &bulet),
+		chromedp.Evaluate(`document.querySelector('.comment-body a').target`, &target),
+		chromedp.Evaluate(`(() => {
+			const card = document.querySelector('.comment-card').getBoundingClientRect();
+			const link = document.querySelector('.comment-body a').getBoundingClientRect();
+			return [card.right, link.right, document.documentElement.scrollWidth, document.documentElement.clientWidth];
+		})()`, &overflow),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if table != "yes" {
+		t.Error("description table did not render inside .md-body")
+	}
+	if del != "old" {
+		t.Errorf("strikethrough in a comment rendered as %q, want old", del)
+	}
+	if strong != "new" {
+		t.Errorf("bold in a comment rendered as %q, want new", strong)
+	}
+	if bulet != "yes" {
+		t.Error("task list checkbox missing from the comment")
+	}
+	if target != "_blank" {
+		t.Errorf("comment link target = %q, want _blank so the UI keeps its state", target)
+	}
+	if len(overflow) != 4 {
+		t.Fatalf("geometry = %v, want 4 numbers", overflow)
+	}
+	cardRight, linkRight, scrollWidth, clientWidth := overflow[0], overflow[1], overflow[2], overflow[3]
+	if linkRight > cardRight+1 {
+		t.Errorf("long URL runs %.0fpx past the comment card edge", linkRight-cardRight)
+	}
+	if scrollWidth > clientWidth+1 {
+		t.Errorf("page scrolls horizontally: scrollWidth %.0f > clientWidth %.0f", scrollWidth, clientWidth)
+	}
+}
+
+// jsString quotes s as a JavaScript string literal.
+func jsString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }

@@ -424,6 +424,11 @@ func projectMemberCmd(server *string) *cobra.Command {
 		Example: "  tt project member tt\n  tt project member tt alice member\n  tt project member tt alice --remove",
 		Args:    cobra.RangeArgs(1, 3),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Validate arity before resolving credentials: "give a role" is
+			// useful advice whether or not the caller happens to be logged in.
+			if len(args) != 1 && !remove && len(args) != 3 {
+				return fmt.Errorf("give a role (viewer, member or owner) or --remove")
+			}
 			c, err := serverClient(*server)
 			if err != nil {
 				return err
@@ -457,9 +462,6 @@ func projectMemberCmd(server *string) *cobra.Command {
 				}
 				fmt.Printf("removed %s from %s\n", args[1], args[0])
 				return nil
-			}
-			if len(args) != 3 {
-				return fmt.Errorf("give a role (viewer, member or owner) or --remove")
 			}
 			if err := c.Do(cmd.Context(), "PUT", path, map[string]string{"role": args[2]}, nil); err != nil {
 				return err

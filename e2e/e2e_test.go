@@ -462,8 +462,10 @@ func scenarioMore(t *testing.T, e *env, mode string) string {
 	step("show", y, "--json") // no refs: an empty list
 	step("link", "zzzzzzz", "linear", "ENG-9")
 
-	// Comment JSON, and claim JSON.
-	step("comment", x, "with **markdown**", "--json")
+	// Comment JSON, and claim JSON. The author is pinned: locally it would
+	// otherwise default to the OS user, while the server side uses the
+	// logged-in handle, and the parity comparison would differ by environment.
+	step("comment", x, "with **markdown**", "--author", "jrdn", "--json")
 	step("claim", z, "--as", "erin", "--json")
 
 	// A full edit: status, due date, parent, body; then clearing them.
