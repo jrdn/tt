@@ -1,8 +1,18 @@
 ## Build & Test
 
 ```bash
+mise run test         # unit tests
+mise run lint         # go vet
 mise run test:ui      # headless-Chrome tests for the web UI (skipped without Chrome)
 ```
+
+`mise run test:pg` covers the Postgres-backed suites (`mise run pg:up` first)
+and `mise run test:e2e` drives the real binary end to end.
+
+CI (`.github/workflows/test.yml`) runs all of these on every pull request to
+`main`: vet and unit tests, the web UI tests, and the integration suite against
+a Postgres 17 service container. The end-to-end job is advisory until it has a
+green record on `main` — a failure there is reported but does not block a PR.
 
 ## tt Task Manager
 

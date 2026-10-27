@@ -1,0 +1,103 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Vet and unit tests: no services, so this stays the fast signal.
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Vet (default, ui and integration builds)
+        run: |
+          go vet ./...
+          go vet -tags ui ./...
+          go vet -tags integration ./...
+      - name: Unit tests
+        run: go test ./...
+
+  # The web UI tests drive headless Chrome (chromedp picks up the runner's
+  # preinstalled Google Chrome) and skip themselves when it is missing.
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Web UI tests
+        run: go test -tags ui -count=1 ./internal/api/...
+
+  # Postgres-backed suites need a real server: `mise run pg:up` locally, the
+  # service container here.
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: tt
+          POSTGRES_DB: tt_test
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      TT_TEST_POSTGRES_URL: postgres://postgres:tt@localhost:55432/tt_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Integration tests
+        run: go test -tags integration -count=1 ./internal/task/... ./internal/server/... ./internal/client/...
+
+  # End-to-end parity tests build the real binary and drive it against both
+  # SQLite and a tt server. Advisory for now: reported, but it does not fail
+  # the run until it has a green record on main.
+  e2e:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: tt
+          POSTGRES_DB: tt_test
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      TT_TEST_POSTGRES_URL: postgres://postgres:tt@localhost:55432/tt_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: End-to-end tests
+        run: go test -tags e2e -count=1 ./e2e/...
