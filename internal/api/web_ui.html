@@ -334,20 +334,39 @@ main {
   padding: 0 4px 2px;
   width: 100%;
 }
+.status-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-top: 5px;
+}
 .status-select {
   -webkit-appearance: none;
   appearance: none;
   border: none;
   border-radius: 6px;
-  padding: 5px 10px;
+  padding: 5px 26px;
   color: #fff;
   font-size: 12px;
   font-weight: 600;
+  text-align: center;
+  text-align-last: center;
+  min-width: 134px;
   cursor: pointer;
   font-family: inherit;
-  flex-shrink: 0;
-  margin-top: 5px;
 }
+/* The status glyph and the caret sit on top of the (appearance:none) select
+   so it reads as a dropdown rather than a button. */
+.status-icon, .status-caret {
+  position: absolute;
+  pointer-events: none;
+  color: #fff;
+  line-height: 1;
+  opacity: .9;
+}
+.status-icon { left: 10px; font-size: 11px; }
+.status-caret { right: 10px; font-size: 10px; }
 
 /* ── Meta grid ── */
 .meta-grid {
@@ -1131,6 +1150,15 @@ const STATUS_LABELS = {
   done:        'Done',
   cancelled:   'Cancelled',
 };
+const STATUS_ICONS = {
+  backlog:     '○',
+  open:        '◇',
+  ready:       '●',
+  in_progress: '◐',
+  in_review:   '◑',
+  done:        '✓',
+  cancelled:   '✕',
+};
 const ALL_STATUSES  = ['open','ready','in_progress','in_review','backlog','done','cancelled'];
 const PRI_CHARS     = ['●','◕','◑','◔'];
 const PRI_COLORS    = ['#ef4444','#f59e0b','#9ca3af','#d1d5db'];
@@ -1165,6 +1193,10 @@ function esc(s) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function statusIcon(status) {
+  return STATUS_ICONS[status] || '●';
 }
 
 function badge(status) {
@@ -1555,10 +1587,14 @@ function renderTaskDetail(data) {
     <div class="task-detail">
       <div class="detail-header">
         <div class="detail-title" id="detail-title" onclick="startEditTitle('${esc(t.id)}')">${esc(t.title)}</div>
-        <select class="status-select" id="status-sel" style="background:${statusColor}"
-                onchange="updateStatus('${esc(t.id)}', this)">
-          ${statusOpts}
-        </select>
+        <span class="status-picker" id="status-picker" title="Change status">
+          <span class="status-icon" id="status-icon">${statusIcon(t.status)}</span>
+          <select class="status-select" id="status-sel" aria-label="Status"
+                  style="background:${statusColor}" onchange="updateStatus('${esc(t.id)}', this)">
+            ${statusOpts}
+          </select>
+          <span class="status-caret">▾</span>
+        </span>
       </div>
 
       <div class="meta-grid">${metaRows}</div>
@@ -1627,6 +1663,8 @@ function renderTaskDetail(data) {
 async function updateStatus(id, select) {
   const status = select.value;
   select.style.background = STATUS_COLORS[status] || '#9ca3af';
+  const icon = document.getElementById('status-icon');
+  if (icon) icon.textContent = statusIcon(status);
   await apiFetch(API + '/tasks/' + encodeURIComponent(id), {
     method: 'PATCH',
     headers: {'Content-Type': 'application/json'},

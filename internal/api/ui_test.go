@@ -423,3 +423,54 @@ func TestLocalModeCommentBoxStillAsks(t *testing.T) {
 		t.Errorf("local-mode author input missing, want it present")
 	}
 }
+
+// TestStatusControlReadsAsDropdown checks the detail header's status control
+// centres its label, shows a glyph for the current status, and carries a
+// caret so it looks like a dropdown rather than a button.
+func TestStatusControlReadsAsDropdown(t *testing.T) {
+	ctx, url := newBrowser(t)
+	var align, icon, caret string
+	var box []float64
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url),
+		chromedp.WaitVisible("#task-list"),
+		chromedp.Evaluate(`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title:'status task', status:'in_progress'})}).then(r => r.ok)`, nil,
+			func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
+		chromedp.Evaluate(`loadTasks()`, nil),
+		chromedp.Poll(`document.querySelector('.task-item') !== null`, nil),
+		chromedp.Evaluate(`document.querySelector('.task-item').click()`, nil),
+		chromedp.Poll(`document.querySelector('#status-sel') !== null`, nil),
+		chromedp.Evaluate(`getComputedStyle(document.getElementById('status-sel')).textAlign`, &align),
+		chromedp.Evaluate(`document.getElementById('status-icon').textContent`, &icon),
+		chromedp.Evaluate(`document.querySelector('.status-caret').textContent`, &caret),
+		// glyph right edge, caret left edge, the select's centre, left edge, width
+		chromedp.Evaluate(`(() => {
+			const sel = document.getElementById('status-sel').getBoundingClientRect();
+			const ic  = document.getElementById('status-icon').getBoundingClientRect();
+			const ca  = document.querySelector('.status-caret').getBoundingClientRect();
+			return [ic.right, ca.left, sel.left + sel.width / 2, sel.left, sel.width];
+		})()`, &box),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(box) != 5 {
+		t.Fatalf("geometry = %v, want 5 numbers", box)
+	}
+	iconRight, caretLeft, centre, selectLeft, selectWidth := box[0], box[1], box[2], box[3], box[4]
+
+	if align != "center" {
+		t.Errorf("status select text-align = %q, want center", align)
+	}
+	if icon != "◐" {
+		t.Errorf("status glyph = %q, want ◐ for in_progress", icon)
+	}
+	if caret != "▾" {
+		t.Errorf("caret = %q, want a down arrow", caret)
+	}
+	if iconRight < selectLeft+2 || iconRight > centre {
+		t.Errorf("glyph right edge = %.0f, want it inside the control left of centre (%.0f..%.0f)", iconRight, selectLeft, centre)
+	}
+	if caretLeft < centre || caretLeft > selectLeft+selectWidth-2 {
+		t.Errorf("caret left edge = %.0f, want it right of centre (%.0f) and inside the control", caretLeft, centre)
+	}
+}
