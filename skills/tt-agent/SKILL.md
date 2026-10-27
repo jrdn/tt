@@ -36,6 +36,39 @@ tt relate <id> blocks <id>         # blocks | duplicates | related
 
 IDs are short; a unique prefix works.
 
+## Listing every project
+
+`tt ls` only ever covers one project, and `tt global-overview` walks *local*
+databases — pointed at a server it prints `no tasks`. To survey the whole
+board, loop over the projects:
+
+```bash
+for p in $(tt project ls --json | jq -r '.[].slug'); do
+  echo "## $p"
+  TT_PROJECT=$p tt ls --all
+done
+```
+
+For one aggregated table, the server exposes the same endpoints the web UI
+uses (`$TT_SERVER` and `$TT_API_KEY` are already exported):
+
+```bash
+curl -s -H "Authorization: Bearer $TT_API_KEY" "$TT_SERVER/api/v1/projects"
+curl -s -H "Authorization: Bearer $TT_API_KEY" \
+  "$TT_SERVER/api/v1/projects/<slug>/tasks?all=1"
+curl -s -H "Authorization: Bearer $TT_API_KEY" \
+  "$TT_SERVER/api/v1/projects/<slug>/tasks/<id>"   # embeds comments, subtasks, relations
+```
+
+There is no separate comments endpoint: task detail carries them. `/api/v1/whoami`
+echoes your handle and project roles. Send an explicit `User-Agent` — the
+deployed server sits behind Cloudflare, which rejects some client defaults
+(python-urllib gets a 403). `.../events` is a server-sent-events stream, so
+don't poll it from a script.
+
+You only see projects your key is a member of. A project missing from
+`tt project ls` is not something to work around.
+
 ## How to work a task
 
 1. `tt show <id>` and read the comments before you start. Someone may have left context.
