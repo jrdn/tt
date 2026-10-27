@@ -24,7 +24,7 @@ func newUpdateCmd() *cobra.Command {
 		Short:   "Update fields on one or more tasks",
 		Long: `Update fields on one or more tasks.
 
-Each ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
+Each ID can be a plain task ID or a qualified ID (<project>.<task_id> or <project>:<task_id>).`,
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := task.UpdateOpts{}

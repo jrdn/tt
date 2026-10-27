@@ -13,7 +13,7 @@ func newReopenCmd() *cobra.Command {
 		Short: "Set one or more tasks back to open",
 		Long: `Set one or more tasks back to open.
 
-Each ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
+Each ID can be a plain task ID or a qualified ID (<project>.<task_id> or <project>:<task_id>).`,
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			status := task.StatusOpen

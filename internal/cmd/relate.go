@@ -14,7 +14,7 @@ func newRelateCmd() *cobra.Command {
 		Short:   "Add a relation between tasks (blocks, duplicates, related)",
 		Long: `Add a relation between tasks.
 
-Each ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).
+Each ID can be a plain task ID or a qualified ID (<project>.<task_id> or <project>:<task_id>).
 Cross-database relations are not supported — both tasks must be in the same database.`,
 		Args:  cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {

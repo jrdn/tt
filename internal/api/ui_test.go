@@ -552,3 +552,47 @@ func jsString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
+
+// TestTaskIdsShowTheirProject checks the server UI prefixes every task ID with
+// its project, so a bare four-char hash can't be read as another project's
+// ticket. The list, the detail panel and the all-projects view all agree.
+func TestTaskIdsShowTheirProject(t *testing.T) {
+	ctx, url := newServerModeBrowser(t)
+	var listChip, detailID, allChips string
+	var active bool
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url),
+		chromedp.Poll(`document.querySelector('.task-item .id-chip') !== null`, nil),
+		chromedp.Evaluate(`document.querySelector('.task-item .id-chip').textContent.trim()`, &listChip),
+		// Selecting a task must not depend on the chip text matching the raw ID.
+		chromedp.Evaluate(`document.querySelector('.task-item').click()`, nil),
+		chromedp.Poll(`document.querySelector('.meta-grid .meta-value') !== null`, nil),
+		chromedp.Evaluate(`document.querySelector('.meta-grid .meta-value').textContent.trim()`, &detailID),
+		chromedp.Evaluate(`document.querySelector('.task-item').classList.contains('active')`, &active),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(listChip, "alpha.") {
+		t.Errorf("list id chip = %q, want an alpha. prefix", listChip)
+	}
+	if detailID != listChip {
+		t.Errorf("detail id = %q, list id = %q; want the same qualified ID", detailID, listChip)
+	}
+	if !active {
+		t.Errorf("clicking a task did not mark it active")
+	}
+
+	if err := chromedp.Run(ctx,
+		chromedp.Evaluate(`switchProject('all')`, nil),
+		chromedp.Sleep(500*time.Millisecond),
+		chromedp.Poll(`document.querySelector('.project-chip') !== null`, nil),
+		chromedp.Evaluate(`[...document.querySelectorAll('.task-item .id-chip')].map(e => e.textContent.trim()).join(' ')`, &allChips),
+	); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"alpha.", "beta."} {
+		if !strings.Contains(allChips, want) {
+			t.Errorf("all-projects ids %q missing a %s prefix", allChips, want)
+		}
+	}
+}

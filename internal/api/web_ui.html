@@ -1023,6 +1023,19 @@ function projName(slug) {
   return p ? p.name : slug;
 }
 
+// qid renders a task ID with its project, e.g. "tt.1hde6nf". A bare four-char
+// ID can't be placed from memory, so on tt server every task shown carries its
+// prefix: in single-project mode CURRENT_PROJECT supplies it, in all-projects
+// mode the per-task _project tag does. Detail data (subtasks, relations) has no
+// tag, so openProject — the project of the task on screen — fills in.
+let openProject = null;
+function qidOf(proj, id) { return proj ? proj + '.' + id : id; }
+function qid(t) {
+  const id = typeof t === 'string' ? t : (t && t.id) || '';
+  const proj = (typeof t === 'string' ? '' : (t._project || '')) || openProject || CURRENT_PROJECT || '';
+  return qidOf(proj, id);
+}
+
 async function setupProject() {
   if (!TT_SERVER) return true;
   const res = await apiFetch('/api/v1/projects');
@@ -1287,13 +1300,13 @@ function renderTaskList(tasks) {
     return;
   }
   ul.innerHTML = tasks.map(t => {
-    const parentRef  = t.parent_id ? `<span class="parent-ref">↳ ${esc(t.parent_id)}</span>` : '';
+    const proj       = ALL ? t._project || '' : CURRENT_PROJECT || '';
+    const parentRef  = t.parent_id ? `<span class="parent-ref">↳ ${esc(qidOf(proj, t.parent_id))}</span>` : '';
     const assigneeEl = t.assignee  ? `<span style="font-size:11px;color:var(--text-dim)">@${esc(t.assignee)}</span>` : '';
     const projectEl  = ALL && t._project ? `<span class="project-chip">${esc(projName(t._project))}</span>` : '';
-    const proj       = ALL ? t._project || '' : '';
     const active     = t.id === selectedId && (!ALL || t._project === selectedProject);
     return `
-      <li class="task-item${active ? ' active' : ''}" data-project="${esc(proj)}" onclick="selectTask('${esc(t.id)}', '${esc(proj)}')">
+      <li class="task-item${active ? ' active' : ''}" data-id="${esc(t.id)}" data-project="${esc(ALL ? t._project || '' : '')}" onclick="selectTask('${esc(t.id)}', '${esc(ALL ? t._project || '' : '')}')">
         <div class="task-item-title">${esc(t.title)}</div>
         <div class="task-item-meta">
           ${priSpan(t.priority)}
@@ -1301,7 +1314,7 @@ function renderTaskList(tasks) {
           ${assigneeEl}
           ${projectEl}
           ${parentRef}
-          <span class="id-chip">${esc(t.id)}</span>
+          <span class="id-chip">${esc(qidOf(proj, t.id))}</span>
         </div>
       </li>`;
   }).join('');
@@ -1446,12 +1459,12 @@ function renderIssues() {
     (!assignee || (assignee === '__none__' ? !t.assignee : t.assignee === assignee)) &&
     (!pri || String(t.priority) === pri) &&
     (project === '__all__' || (t._project || '') === project) &&
-    (!q || [t.title, t.id, t.assignee, t.description].some(v => v && String(v).toLowerCase().includes(q)))
+    (!q || [t.title, t.id, qid(t), t.assignee, t.description].some(v => v && String(v).toLowerCase().includes(q)))
   ).sort((a, b) => (a.priority - b.priority) || String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
   document.getElementById('issue-count').textContent = `${rows.length} of ${dashTasks.length}`;
   document.getElementById('issue-rows').innerHTML = rows.length ? rows.map(t => `
     <tr onclick="openIssue('${esc(t.id)}', '${esc(t._project || '')}')">
-      <td><span class="id-chip">${esc(t.id)}</span></td>
+      <td><span class="id-chip">${esc(qid(t))}</span></td>
       <td class="title">${esc(t.title)}</td>
       <td>${badge(t.status)}</td>
       <td>${priSpan(t.priority)}</td>
@@ -1495,9 +1508,9 @@ async function selectTask(id, project) {
     selectedProject = project;
     API = projBase(project); // task calls below go to this task's project
   }
+  openProject = project || (ALL ? selectedProject : CURRENT_PROJECT) || CURRENT_PROJECT || null;
   document.querySelectorAll('.task-item').forEach(el => {
-    const chip = el.querySelector('.id-chip');
-    el.classList.toggle('active', chip && chip.textContent.trim() === id &&
+    el.classList.toggle('active', el.dataset.id === id &&
       (!ALL || el.dataset.project === selectedProject));
   });
   showDetailPanel();
@@ -1541,13 +1554,13 @@ function renderTaskDetail(data) {
       onclick="updateDueDate('${esc(t.id)}', '')">×</button>` : ''}`;
 
   const metaRows = [
-    ['ID',      `<span class="meta-mono">${esc(t.id)}</span>`],
+    ['ID',      `<span class="meta-mono">${esc(qid(t))}</span>`],
     ['Priority', priSelect],
     ['Assignee', `<input class="editable-input" id="assignee-inp" type="text"
                          value="${esc(t.assignee || '')}" placeholder="unassigned"
                          onblur="updateAssignee('${esc(t.id)}', this.value)">`],
     ['Due',      dueDateInput],
-    t.parent_id  ? ['Parent',     `<button class="meta-link" onclick="selectTask('${esc(t.parent_id)}')">${esc(t.parent_id)}</button>`] : null,
+    t.parent_id  ? ['Parent',     `<button class="meta-link" onclick="selectTask('${esc(t.parent_id)}')">${esc(qid(t.parent_id))}</button>`] : null,
     t.created_by ? ['Created by', `<span class="meta-mono">${esc(t.created_by)}</span>`] : null,
     ['Created',  `<span class="meta-mono">${esc(t.created_at.slice(0,10))}</span>`],
     ['Updated',  `<span class="meta-mono">${esc(t.updated_at.slice(0,10))}</span>`],
@@ -1561,7 +1574,7 @@ function renderTaskDetail(data) {
         <div class="list-item" onclick="selectTask('${esc(s.id)}')">
           ${priSpan(s.priority)} ${badge(s.status)}
           <span class="list-item-title">${esc(s.title)}</span>
-          <span class="id-chip">${esc(s.id)}</span>
+          <span class="id-chip">${esc(qid(s.id))}</span>
         </div>`).join('')
     : '<div class="none-text">None</div>';
 
@@ -1575,7 +1588,7 @@ function renderTaskDetail(data) {
           <div class="list-item" onclick="selectTask('${esc(otherId)}')">
             <span class="rel-type">${esc(relType)}</span>
             <span class="list-item-title"></span>
-            <span class="meta-mono" style="color:#374151">${esc(otherId)}</span>
+            <span class="meta-mono" style="color:#374151">${esc(qid(otherId))}</span>
             <button class="rel-remove" onclick="event.stopPropagation();removeRelation(${rmArgs})" title="Remove relation">×</button>
           </div>`;
       }).join('')
@@ -1818,7 +1831,7 @@ function renderRelResults(tasks) {
       <span style="color:${PRI_COLORS[i]};font-weight:700;flex-shrink:0">${PRI_CHARS[i]}</span>
       <span class="badge" style="background:${STATUS_COLORS[t.status]||'#9ca3af'};flex-shrink:0;font-size:9px">${esc(STATUS_LABELS[t.status]||t.status)}</span>
       <span class="rel-result-title">${esc(t.title)}</span>
-      <span class="rel-result-id">${esc(t.id)}</span>
+      <span class="rel-result-id">${esc(qid(t))}</span>
     </div>`;
   }).join('');
   el.classList.add('open');
@@ -1829,7 +1842,7 @@ function selectRelTarget(idx) {
   if (!t) return;
   relTargetId = t.id;
   const inp = document.getElementById('rel-target-inp');
-  if (inp) inp.value = t.title + ' · ' + t.id;
+  if (inp) inp.value = t.title + ' · ' + qid(t);
   const el = document.getElementById('rel-search-results');
   if (el) el.classList.remove('open');
 }
@@ -1965,6 +1978,7 @@ async function loadRecent() {
     list.innerHTML = tasks.map(t => {
       const proj = t._project || CURRENT_PROJECT || '';
       const meta = (proj ? `<span class="project-chip">${esc(projName(proj))}</span>` : '') +
+        `<span class="id-chip">${esc(qidOf(proj, t.id))}</span>` +
         (t.assignee ? `<span class="recent-row-assignee">@${esc(t.assignee)}</span>` : '');
       return `
       <div class="recent-row" onclick="closeRecent(); selectTask('${esc(t.id)}', '${ALL ? esc(t._project) : ''}')">

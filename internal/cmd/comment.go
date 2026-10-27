@@ -16,7 +16,7 @@ func newCommentCmd() *cobra.Command {
 		Short:   "Add a comment to a task",
 		Long: `Add a comment to a task.
 
-The ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
+The ID can be a plain task ID or a qualified ID (<project>.<task_id> or <project>:<task_id>).`,
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			qt, err := resolveTask(args[0])

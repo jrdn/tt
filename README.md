@@ -134,6 +134,9 @@ tt done <id>                        # mark done
 tt update <id> --status=in_progress # update any field
 ```
 
+A task in another project is reachable with a qualified ID — `tt show tt.1hde6nf`
+(a colon works too: `tt:1hde6nf`). The web UI always shows IDs in that form.
+
 ## Server mode
 
 A repo uses a tt server when it has a `.tt.json` at its root. Commit it so teammates share the setting:

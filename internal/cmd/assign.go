@@ -13,7 +13,7 @@ func newAssignCmd() *cobra.Command {
 		Short: "Assign one or more tasks to a handle",
 		Long: `Assign one or more tasks to a handle.
 
-Each ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).`,
+Each ID can be a plain task ID or a qualified ID (<project>.<task_id> or <project>:<task_id>).`,
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			handle := args[0]

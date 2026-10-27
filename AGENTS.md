@@ -37,6 +37,7 @@ tt relate <id> blocks <id>                  # link tasks (blocks | duplicates | 
 
 - All commands accept `--json` for machine-readable output. `tt show <id> --json` returns task, subtasks, relations, and comments in one object.
 - IDs are short 4-char base32 hashes. Prefix matching is supported — `tt show ab` works if unambiguous.
+- A task in another project takes a qualified ID: `tt show tt.1hde6nf` or `tt:1hde6nf`. The web UI always shows the qualified form.
 - `--assignee` accepts free-form handles: `jrdn`, `claude/opus4.7`, `lmstudio/qwen3-coder`.
 - Use `tt comment` to log reasoning and progress without overwriting the description. Always pass `--author` to identify yourself (e.g. `--author claude/opus4.7`, `--author cursor/claude-sonnet`) — default falls back to OS username, which is not meaningful for agents.
 - Priority: 0=critical, 1=high, 2=normal (default), 3=low, 4=backlog.

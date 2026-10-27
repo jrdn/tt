@@ -13,7 +13,7 @@ func newLinkCmd() *cobra.Command {
 		Short: "Link a task to an external resource (e.g. a Linear issue)",
 		Long: `Link a task to an external resource.
 
-The ID can be a plain task ID or a qualified ID (<db_name>.<task_id>).
+The ID can be a plain task ID or a qualified ID (<project>.<task_id> or <project>:<task_id>).
 Re-running with the same source and external-id updates the URL and
 re-points the ref at this task.`,
 		Args: cobra.RangeArgs(3, 4),
