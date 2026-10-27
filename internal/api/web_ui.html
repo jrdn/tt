@@ -190,6 +190,17 @@ aside {
   flex-direction: column;
   flex-shrink: 0;
 }
+/* Drag handle between the task list and the detail pane. Its job is the
+   resize gesture; the visible divider is the sidebar's border-right. */
+.splitter {
+  width: 6px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.1s;
+}
+.splitter:hover, .splitter.dragging { background: rgba(79,70,229,0.35); }
+body.col-resizing { cursor: col-resize; user-select: none; }
 .filter-strip {
   padding: 8px;
   border-bottom: 1px solid var(--border);
@@ -688,6 +699,9 @@ main {
 
   .layout { flex-direction: column; }
 
+  /* Panels stack vertically on phones: nothing to drag. */
+  .splitter { display: none; }
+
   aside {
     width: 100%;
     border-right: none;
@@ -735,8 +749,11 @@ main {
 .modal {
   background: var(--surface);
   border-radius: 12px;
-  width: 500px;
+  width: 720px;
   max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
   box-shadow: 0 20px 60px rgba(0,0,0,0.25);
   overflow: hidden;
 }
@@ -762,6 +779,7 @@ main {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  overflow-y: auto;
 }
 .form-field { display: flex; flex-direction: column; gap: 5px; }
 .form-label { font-size: 12px; font-weight: 600; color: var(--text-2); }
@@ -893,6 +911,8 @@ main {
     </div>
     <ul class="task-list" id="task-list"></ul>
   </aside>
+  <div class="splitter" id="splitter" role="separator" aria-orientation="vertical"
+       title="Drag to resize the sidebar (double-click to reset)"></div>
   <main id="main">
     <div class="empty-state">Select a task to view details</div>
   </main>
@@ -2038,7 +2058,71 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// ── Sidebar splitter ───────────────────────────────────────
+// The sidebar width is user-draggable; the choice is remembered per browser.
+// Phones stack the panels, so the width only applies above the breakpoint.
+const SIDEBAR_MIN = 200;
+const SIDEBAR_MAX = 640;
+const SIDEBAR_DEFAULT = 290;
+const SIDEBAR_KEY = 'tt-sidebar-width';
+
+function setupSplitter() {
+  const bar = document.getElementById('splitter');
+  const aside = document.querySelector('.layout aside');
+  if (!bar || !aside) return;
+  const narrow = window.matchMedia('(max-width: 640px)');
+
+  const storedWidth = () => {
+    try { return parseInt(localStorage.getItem(SIDEBAR_KEY), 10) || 0; } catch (_) { return 0; }
+  };
+  const remember = px => {
+    try { localStorage.setItem(SIDEBAR_KEY, String(Math.round(px))); } catch (_) {}
+  };
+  const setWidth = px => {
+    const w = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Math.round(px)));
+    // Inline width would beat the phone layout's full-width rule, so drop it.
+    aside.style.width = narrow.matches ? '' : w + 'px';
+    return w;
+  };
+
+  if (storedWidth()) setWidth(storedWidth());
+
+  bar.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    const left = aside.getBoundingClientRect().left;
+    let width = aside.getBoundingClientRect().width;
+    bar.classList.add('dragging');
+    document.body.classList.add('col-resizing');
+    const move = ev => { width = setWidth(ev.clientX - left); };
+    const stop = () => {
+      bar.classList.remove('dragging');
+      document.body.classList.remove('col-resizing');
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+      remember(width);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+  });
+
+  bar.addEventListener('dblclick', () => {
+    setWidth(SIDEBAR_DEFAULT);
+    remember(SIDEBAR_DEFAULT);
+  });
+
+  // Shrinking the window must not leave the detail pane squeezed to nothing.
+  const clampToViewport = () => {
+    if (narrow.matches) return;
+    const room = window.innerWidth - 320;
+    if (aside.getBoundingClientRect().width > room) remember(setWidth(room));
+  };
+  window.addEventListener('resize', clampToViewport);
+  narrow.addEventListener('change', () => setWidth(storedWidth() || SIDEBAR_DEFAULT));
+  clampToViewport();
+}
+
 // ── Boot ───────────────────────────────────────────────────
+setupSplitter();
 setupProject().then(ok => {
   if (!ok) return;
   fetchMyHandle();
