@@ -142,6 +142,7 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("POST /api/v1/projects", s.handleCreateProject)
 	authed.HandleFunc("PUT /api/v1/projects/{project}/members/{handle...}", s.handleSetMember)
 	authed.HandleFunc("DELETE /api/v1/projects/{project}/members/{handle...}", s.handleRemoveMember)
+	authed.HandleFunc("GET /api/v1/projects/{project}/members", s.handleListMembers)
 	authed.HandleFunc("POST /api/v1/agents", s.handleCreateAgent)
 	authed.HandleFunc("GET /api/v1/keys", s.handleListKeys)
 	authed.HandleFunc("POST /api/v1/keys", s.handleCreateKey)
@@ -300,6 +301,22 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, proj)
+}
+
+// handleListMembers lists a project's members. Any member of the project may
+// read the roster; changing it still needs project:admin.
+func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request) {
+	proj, err := s.project(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	members, err := s.dir.Members(r.Context(), proj)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"project": proj.Slug, "members": members})
 }
 
 func (s *Server) handleSetMember(w http.ResponseWriter, r *http.Request) {
