@@ -323,3 +323,7 @@ No sync backend here provides true conflict resolution for simultaneous writes f
 In practice this is rare if you're switching between machines rather than using both simultaneously. S3 versioning and Litestream both provide recovery options if you do overwrite something you didn't mean to.
 
 If true offline peer sync with conflict resolution is a hard requirement, reconsider this tool.
+
+## Agent worker
+
+A scheduled agent can work this board unattended: it claims assigned tickets, opens PRs, answers comments and moves finished tickets to `in_review`. See [docs/tt-agent.md](docs/tt-agent.md) for how it is wired up.
