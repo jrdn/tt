@@ -702,6 +702,7 @@ main {
   color: #cdd6f4;
 }
 .btn-ghost:hover { background: rgba(255,255,255,0.1); }
+.new-task-btn { font-size: 12px; padding: 5px 12px; }
 .btn-cancel { background: var(--bg-muted); color: var(--text-2); }
 .btn-cancel:hover { background: var(--border); }
 
@@ -723,6 +724,13 @@ main {
 /* ── Mobile layout ── */
 @media (max-width: 640px) {
   .back-btn { display: block; }
+
+  /* The header holds five controls; at phone widths the stock sizes add up
+     to more than the viewport and push the whole page sideways. */
+  header { height: 48px; padding: 0 10px; gap: 6px; }
+  header h1 { font-size: 16px; letter-spacing: -0.5px; min-width: 0; }
+  .recent-btn, .new-task-btn { min-width: 0; padding: 6px 9px; font-size: 12px; }
+  .back-btn { padding: 5px 6px; }
 
   .layout { flex-direction: column; }
 
@@ -855,6 +863,39 @@ main {
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* ── Phone tweaks that must win over the rules above ── */
+@media (max-width: 640px) {
+  /* The stock 720px dialog with centred 16px margins leaves too little room
+     once the on-screen keyboard is up and puts the actions below the fold.
+     Full-screen sheet: the form scrolls, the buttons stay pinned. */
+  .modal {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+  }
+  .modal-header { padding: 14px 16px; }
+  .modal-body { padding: 16px; flex: 1; min-height: 0; }
+  .modal-footer {
+    position: sticky;
+    bottom: 0;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    background: var(--surface);
+  }
+  .modal-footer .btn { flex: 1; padding: 13px 16px; font-size: 15px; }
+
+  /* 16px stops mobile browsers zooming into a focused field, which is what
+     makes the dialog feel like it does not fit. */
+  .form-input, .form-select, .add-comment textarea,
+  .editable-input, .detail-title-input { font-size: 16px; }
+  .form-textarea { min-height: 130px; }
+
+  /* 44px is the smallest comfortable height for a thumb. */
+  .task-item { min-height: 44px; padding: 12px 14px; }
+  .task-item.active { padding-left: 11px; }
+}
 </style>
 </head>
 <body>
@@ -862,7 +903,7 @@ main {
   <button class="back-btn" id="back-btn" onclick="goBackToList()" style="display:none">← Back</button>
   <h1>tt</h1>
   <select id="project-select" onchange="switchProject(this.value)" style="display:none"></select>
-  <button class="btn btn-ghost" onclick="openNewTask()" style="font-size:12px;padding:5px 12px">+ New</button>
+  <button class="btn btn-ghost new-task-btn" id="new-task-btn" onclick="openNewTask()">+ New</button>
   <button class="recent-btn" id="dash-btn" onclick="toggleDashboard()">Dashboard</button>
   <button class="recent-btn" id="recent-btn" onclick="toggleRecent()">Recent</button>
   <button class="recent-btn" id="theme-btn" onclick="cycleTheme()" title="Theme: follows system unless overridden"></button>
