@@ -25,11 +25,13 @@ func (s *authzStore) Activity(ctx context.Context, limit int) ([]task.Activity, 
 		At     string  `db:"at"`
 	}
 	var rows []eventRow
-	err := s.dir.db.SelectContext(ctx, &rows, `SELECT task_id, actor_label, action,
-			detail::text AS detail,
+	err := s.dir.db.SelectContext(ctx, &rows, `SELECT task_id,
+			COALESCE(NULLIF(e.actor_label, ''), p.handle) AS actor_label,
+			action, detail::text AS detail,
 			to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS at
-		FROM task_events WHERE project_id = $1
-		ORDER BY task_events.at DESC, id DESC LIMIT $2`, s.project.ID, limit)
+		FROM task_events e LEFT JOIN principals p ON p.id = e.actor_id
+		WHERE project_id = $1
+		ORDER BY e.at DESC, e.id DESC LIMIT $2`, s.project.ID, limit)
 	if err != nil {
 		return nil, err
 	}
