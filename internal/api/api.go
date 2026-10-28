@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -119,17 +120,36 @@ type webTaskDetail struct {
 	DescriptionHTML string             `json:"description_html"`
 }
 
+// Version is the tt build version shown in the header of the web UI. The
+// binary sets it at startup from its build-time ldflags value; it stays
+// "dev" for builds that carry no version.
+var Version = "dev"
+
+// versionPlaceholder in web_ui.html is replaced with Version when the UI is
+// served.
+const versionPlaceholder = "{{TT_VERSION}}"
+
+// renderIndex fills the per-process values into the embedded UI. serverMode
+// turns on the tt server's login and per-project API routing.
+func renderIndex(serverMode bool) string {
+	page := webUI
+	if serverMode {
+		page = strings.Replace(page, "/*TT_CONFIG*/null", "true", 1)
+	}
+	return strings.Replace(page, versionPlaceholder, html.EscapeString(Version), 1)
+}
+
 // ServerIndex serves the web UI in tt server mode: it logs in via the
 // session cookie and talks to /api/v1/projects/{project}.
 func ServerIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, strings.Replace(webUI, "/*TT_CONFIG*/null", "true", 1))
+	fmt.Fprint(w, renderIndex(true))
 }
 
 // Index serves the single-page web UI.
 func Index(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, webUI)
+	fmt.Fprint(w, renderIndex(false))
 }
 
 func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
