@@ -637,3 +637,58 @@ func TestTaskIdsShowTheirProject(t *testing.T) {
 		}
 	}
 }
+
+// TestTaskDeepLink checks a task link opens straight into the task, that the
+// address bar follows what is on screen, and that leaving the task clears it.
+func TestTaskDeepLink(t *testing.T) {
+	ctx, url := newBrowser(t)
+	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitVisible("#dash-btn")); err != nil {
+		t.Fatal(err)
+	}
+	var id string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title:'deep link me'})})
+		.then(r => r.json()).then(d => (d.task || d).id)`, &id,
+		func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) })); err != nil || id == "" {
+		t.Fatalf("create task: %q %v", id, err)
+	}
+
+	var title, search string
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url+"/?task="+id),
+		chromedp.Poll(`document.getElementById('detail-title') !== null`, nil),
+		chromedp.Evaluate(`document.getElementById('detail-title').innerText`, &title),
+		chromedp.Evaluate(`location.search`, &search),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if title != "deep link me" {
+		t.Errorf("detail title = %q, want the linked task", title)
+	}
+	if !strings.Contains(search, "task="+id) {
+		t.Errorf("location.search = %q, want the task id in it", search)
+	}
+
+	// The copy button reports back that it copied.
+	var btn string
+	if err := chromedp.Run(ctx,
+		chromedp.Click("#copy-link-btn", chromedp.ByID),
+		chromedp.Poll(`document.getElementById('copy-link-btn').textContent.includes('copied')`, nil),
+		chromedp.Evaluate(`document.getElementById('copy-link-btn').textContent.trim()`, &btn),
+	); err != nil {
+		t.Fatalf("copy link: %v", err)
+	}
+	if btn != "Link copied" {
+		t.Errorf("copy button = %q, want Link copied", btn)
+	}
+
+	// Going back to the list drops the task from the URL.
+	if err := chromedp.Run(ctx,
+		chromedp.Evaluate(`goBackToList()`, nil),
+		chromedp.Evaluate(`location.search`, &search),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(search, "task=") {
+		t.Errorf("location.search = %q after going back, want no task", search)
+	}
+}

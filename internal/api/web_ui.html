@@ -519,6 +519,9 @@ main {
   font-family: inherit;
 }
 .btn-link:hover { background: var(--active-bg); }
+/* Copy-link sits in the detail header, which is a flex row: keep it one line
+   and align it with the title rather than the status picker. */
+.copy-link-btn { flex-shrink: 0; white-space: nowrap; margin-top: 6px; }
 
 /* ── Markdown body (description and comments) ── */
 .md-body, .comment-body {
@@ -1113,6 +1116,74 @@ function switchProject(slug) {
   location.search = '?project=' + encodeURIComponent(slug);
 }
 
+// ── Deep links ─────────────────────────────────────────────
+// The URL names the open task (?task=<id>) and, on tt server, its project, so
+// a task can be sent to someone and reloaded straight into it.
+function taskLinkURL(id, project) {
+  const url = new URL(location.href);
+  if (id) {
+    url.searchParams.set('task', id);
+    const proj = project || openProject;
+    if (TT_SERVER && proj && proj !== ALL_PROJECTS) url.searchParams.set('project', proj);
+  } else {
+    url.searchParams.delete('task');
+    if (TT_SERVER) {
+      if (ALL) url.searchParams.delete('project');
+      else url.searchParams.set('project', CURRENT_PROJECT);
+    }
+  }
+  return url;
+}
+
+// syncTaskURL keeps the address bar pointing at what is on screen, so the
+// browser's own "copy link" gives a working link too.
+function syncTaskURL(id, project) {
+  const url = taskLinkURL(id, project);
+  history.replaceState(null, '', url.pathname + url.search);
+}
+
+// openLinkedTask opens the task named in the URL. In all-projects mode a link
+// out of the list carries no project, so each project is asked for the task.
+async function openLinkedTask(id) {
+  if (!ALL) { selectTask(id, ''); return; }
+  for (const p of PROJECTS) {
+    try {
+      const res = await apiFetch(projBase(p.slug) + '/tasks/' + encodeURIComponent(id));
+      if (res.ok) { selectTask(id, p.slug); return; }
+    } catch (_) { /* try the next project */ }
+  }
+  selectTask(id, PROJECTS.length ? PROJECTS[0].slug : '');
+}
+
+// copyTaskLink puts the open task's link on the clipboard.
+async function copyTaskLink() {
+  if (!selectedId) return;
+  const url = taskLinkURL(selectedId);
+  syncTaskURL(selectedId);
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(url.href);
+    copied = true;
+  } catch (_) {
+    // Clipboard API needs a secure context; fall back to the old copy trick.
+    const ta = document.createElement('textarea');
+    ta.value = url.href;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { copied = document.execCommand('copy'); } catch (e) {}
+    ta.remove();
+  }
+  const btn = document.getElementById('copy-link-btn');
+  if (btn) {
+    btn.textContent = copied ? 'Link copied' : 'Copy failed';
+    setTimeout(() => { if (btn.isConnected) btn.textContent = 'Copy link'; }, 1600);
+  }
+  if (!copied) window.prompt('Copy this link:', url.href);
+}
+
 // fetchTasks lists tasks from path (e.g. '/tasks' + query). In all-projects
 // mode it queries every project and tags each task with its project slug.
 async function fetchTasks(path) {
@@ -1621,6 +1692,7 @@ function showDetailPanel() {
 
 function goBackToList() {
   selectedId = null;
+  syncTaskURL(null);
   document.querySelector('.layout').classList.remove('detail-active');
   const backBtn = document.getElementById('back-btn');
   if (backBtn) backBtn.style.display = 'none';
@@ -1636,6 +1708,7 @@ async function selectTask(id, project) {
     API = projBase(project); // task calls below go to this task's project
   }
   openProject = project || (ALL ? selectedProject : CURRENT_PROJECT) || CURRENT_PROJECT || null;
+  syncTaskURL(id, openProject);
   document.querySelectorAll('.task-item').forEach(el => {
     el.classList.toggle('active', el.dataset.id === id &&
       (!ALL || el.dataset.project === selectedProject));
@@ -1735,6 +1808,7 @@ function renderTaskDetail(data) {
     <div class="task-detail">
       <div class="detail-header">
         <div class="detail-title" id="detail-title" onclick="startEditTitle('${esc(t.id)}')">${esc(t.title)}</div>
+        <button class="btn-link copy-link-btn" id="copy-link-btn" onclick="copyTaskLink()" title="Copy a link to this task">Copy link</button>
         <span class="status-picker" id="status-picker" title="Change status">
           <span class="status-icon" id="status-icon">${statusIcon(t.status)}</span>
           <select class="status-select" id="status-sel" aria-label="Status"
@@ -2303,6 +2377,8 @@ setupProject().then(ok => {
   loadTasks();
   if (ALL) PROJECTS.forEach(p => startLive(projBase(p.slug)));
   else startLive(API);
+  const linked = new URLSearchParams(location.search).get('task');
+  if (linked) openLinkedTask(linked);
 });
 </script>
 </body>
