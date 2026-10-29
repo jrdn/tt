@@ -59,6 +59,15 @@ header h1 {
   color: #cba6f7;
   flex: 1;
 }
+header h1 .version {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: #7f849c;
+  vertical-align: middle;
+}
+header h1 .version:empty { display: none; }
 .recent-btn {
   background: rgba(255,255,255,0.08);
   border: 1px solid rgba(255,255,255,0.15);
@@ -899,7 +908,7 @@ main {
 <body>
 <header>
   <button class="back-btn" id="back-btn" onclick="goBackToList()" style="display:none">← Back</button>
-  <h1>tt</h1>
+  <h1>tt<span class="version" id="tt-version" title="tt build version">{{TT_VERSION}}</span></h1>
   <select id="project-select" onchange="switchProject(this.value)" style="display:none"></select>
   <button class="btn btn-ghost" onclick="openNewTask()" style="font-size:12px;padding:5px 12px">+ New</button>
   <button class="recent-btn" id="dash-btn" onclick="toggleDashboard()">Dashboard</button>

@@ -6,11 +6,13 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
+	"github.com/jrdn/tt/internal/api"
 	"github.com/jrdn/tt/internal/cmd"
 	"github.com/jrdn/tt/internal/db"
 )
 
 func main() {
+	api.Version = version
 	root := cmd.NewRoot(openLocalDB)
 	err := root.Execute()
 	cmd.CloseDB()
