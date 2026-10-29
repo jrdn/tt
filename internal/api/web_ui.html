@@ -88,7 +88,7 @@ header h1 .version:empty { display: none; }
   position: fixed;
   top: 52px;
   right: 12px;
-  width: 480px;
+  width: 560px;
   max-width: calc(100vw - 24px);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -187,6 +187,29 @@ header h1 .version:empty { display: none; }
   overflow: hidden;
 }
 .dash-activity-rows .activity-row:last-child { border-bottom: none; }
+/* Pager under the dashboard's activity panel: the panel shows one short page
+   of the feed, the pager walks back through what was loaded. */
+.dash-activity-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.dash-activity-pager button {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: inherit;
+  font: inherit;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.dash-activity-pager button:hover:not(:disabled) { background: var(--hover); }
+.dash-activity-pager button:disabled { opacity: 0.4; cursor: default; }
 
 /* ── Layout ── */
 .layout {
@@ -1548,6 +1571,40 @@ async function loadDashboard() {
   }
 }
 
+// The dashboard's activity panel shows one short page of the feed; the pager
+// below it walks back through the entries already loaded.
+const DASH_ACTIVITY_PAGE = 5;
+let dashActivity = [];
+let dashActivityPage = 0;
+
+function dashActivityPages() {
+  return Math.max(1, Math.ceil(dashActivity.length / DASH_ACTIVITY_PAGE));
+}
+
+function renderDashActivity() {
+  const rows = document.getElementById('dash-activity-rows');
+  if (!rows) return;
+  dashActivityPage = Math.min(Math.max(dashActivityPage, 0), dashActivityPages() - 1);
+  const start = dashActivityPage * DASH_ACTIVITY_PAGE;
+  const total = dashActivity.length;
+  const page = dashActivity.slice(start, start + DASH_ACTIVITY_PAGE);
+  let html = page.length ? page.map(activityRow).join('')
+    : '<div class="dash-sub" style="padding:10px 14px">No activity yet</div>';
+  if (total > DASH_ACTIVITY_PAGE) {
+    html += `<div class="dash-activity-pager">
+      <button onclick="dashActivityOlder(-1)"${dashActivityPage === 0 ? ' disabled' : ''}>Newer</button>
+      <span>${start + 1}–${start + page.length} of ${total}</span>
+      <button onclick="dashActivityOlder(1)"${dashActivityPage >= dashActivityPages() - 1 ? ' disabled' : ''}>Older</button>
+    </div>`;
+  }
+  rows.innerHTML = html;
+}
+
+function dashActivityOlder(step) {
+  dashActivityPage += step;
+  renderDashActivity();
+}
+
 function renderDashboard(results, activity = []) {
   const today = new Date().toISOString().slice(0, 10);
   const total = {};
@@ -1592,9 +1649,8 @@ function renderDashboard(results, activity = []) {
   }
   document.getElementById('dash-top').innerHTML =
     `<div class="dash-totals">${totals}</div><div class="dash-grid">${cards.join('')}</div>`;
-  document.getElementById('dash-activity-rows').innerHTML = activity.length
-    ? activity.map(activityRow).join('')
-    : '<div class="dash-sub" style="padding:10px 14px">No activity yet</div>';
+  dashActivity = activity;
+  renderDashActivity();
   dashTasks = results.flatMap(({p, tasks}) => (tasks || []).map(t => Object.assign({}, t, {_project: p.slug})));
   renderIssueFilters();
   renderIssues();
