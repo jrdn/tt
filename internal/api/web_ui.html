@@ -1672,12 +1672,24 @@ function renderIssues() {
     </tr>`).join('') : '<tr><td colspan="7">No matching issues</td></tr>';
 }
 
+// openIssue opens a ticket from the dashboard's list or activity panel. In
+// all-projects mode every project is already in view, so the task opens in
+// place (selectTask points the task calls at its own project) instead of
+// switching the whole view to one project — that switch reloaded the page
+// without the task and left the detail view empty. When the task belongs to
+// another project than the one on screen, carry the task in the URL so the
+// reload lands on the ticket.
 function openIssue(id, project) {
-  if (project && !(PROJECTS.length && !ALL && API === projBase(project))) {
-    // Another project than the one loaded: switch to it first.
-    return switchProject(project);
-  }
   toggleDashboard(false);
+  if (ALL) {
+    if (project) selectTask(id, project);
+    else openLinkedTask(id);
+    return;
+  }
+  if (project && CURRENT_PROJECT !== project) {
+    location.href = taskLinkURL(id, project).href;
+    return;
+  }
   selectTask(id, '');
 }
 

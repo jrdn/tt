@@ -235,6 +235,37 @@ func TestDashboardIssueTableFilters(t *testing.T) {
 	}
 }
 
+// TestDashboardIssueOpensInAllProjectsMode covers clicking a ticket in the
+// dashboard's list while the project selector is on "All projects": the ticket
+// must open, not reload into an empty detail view.
+func TestDashboardIssueOpensInAllProjectsMode(t *testing.T) {
+	ctx, url := newServerModeBrowser(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url+"/?project=all"),
+		chromedp.Poll(`document.querySelector('#project-select') !== null`, nil),
+		chromedp.Sleep(300*time.Millisecond),
+		chromedp.Click("#dash-btn", chromedp.ByID),
+		chromedp.Poll(`document.querySelectorAll('#issue-rows tr').length >= 2`, nil),
+	); err != nil {
+		t.Fatal(err)
+	}
+	var search, title string
+	if err := chromedp.Run(ctx,
+		chromedp.Evaluate(`[...document.querySelectorAll('#issue-rows tr')].find(tr => tr.innerText.includes('beta task')).click()`, nil),
+		chromedp.Poll(`document.getElementById('detail-title') !== null`, nil),
+		chromedp.Evaluate(`document.getElementById('detail-title').innerText`, &title),
+		chromedp.Evaluate(`location.search`, &search),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if title != "beta task" {
+		t.Errorf("detail title = %q, want beta task", title)
+	}
+	if !strings.Contains(search, "task=") || !strings.Contains(search, "project=beta") {
+		t.Errorf("location.search = %q, want the task and its project", search)
+	}
+}
+
 // newServerModeBrowser serves the server-mode UI with two projects, "alpha"
 // and "beta", each with one task.
 func newServerModeBrowser(t *testing.T) (context.Context, string) {
