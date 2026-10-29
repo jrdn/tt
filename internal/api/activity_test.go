@@ -33,7 +33,8 @@ func TestActivityFeedListsTicketsAndComments(t *testing.T) {
 	if _, err := store.AddComment(ctx, first.ID, "picked this up", &author); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Create(ctx, "second ticket", task.CreateOpts{CreatedBy: &creator}); err != nil {
+	second, err := store.Create(ctx, "second ticket", task.CreateOpts{CreatedBy: &creator})
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -50,14 +51,35 @@ func TestActivityFeedListsTicketsAndComments(t *testing.T) {
 	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(body.Activity) != 3 {
-		t.Fatalf("got %d entries, want 3: %+v", len(body.Activity), body.Activity)
+	// A comment touches its ticket and a local database keeps no change log, so
+	// the feed also carries an "updated" entry for the commented ticket -- but
+	// only when the comment landed in a later second than the create, since
+	// updated_at has one-second resolution. Assert the entries that must be
+	// there instead of a total count that depends on the clock.
+	if len(body.Activity) < 3 {
+		t.Fatalf("got %d entries, want at least 3: %+v", len(body.Activity), body.Activity)
 	}
-	byKind := map[string]task.Activity{}
+	byKindTask := map[string]task.Activity{}
 	for _, a := range body.Activity {
-		byKind[a.Kind] = a
+		key := a.Kind + "/" + a.TaskID
+		if _, dup := byKindTask[key]; dup {
+			t.Errorf("duplicate %s entry for task %s", a.Kind, a.TaskID)
+		}
+		byKindTask[key] = a
+		if a.TaskID != first.ID && a.TaskID != second.ID {
+			t.Errorf("entry for a task the test did not create: %+v", a)
+		}
+		switch a.Kind {
+		case task.ActivityCreated, task.ActivityComment, task.ActivityUpdated:
+		default:
+			t.Errorf("unexpected entry kind %q: %+v", a.Kind, a)
+		}
 	}
-	comment, ok := byKind[task.ActivityComment]
+	entry := func(kind, taskID string) (task.Activity, bool) {
+		a, ok := byKindTask[kind+"/"+taskID]
+		return a, ok
+	}
+	comment, ok := entry(task.ActivityComment, first.ID)
 	if !ok {
 		t.Fatalf("no comment entry: %+v", body.Activity)
 	}
@@ -67,12 +89,20 @@ func TestActivityFeedListsTicketsAndComments(t *testing.T) {
 	if comment.Actor == nil || *comment.Actor != "hermes" {
 		t.Errorf("comment author = %v, want hermes", comment.Actor)
 	}
-	created, ok := byKind[task.ActivityCreated]
-	if !ok {
-		t.Fatalf("no created entry: %+v", body.Activity)
-	}
-	if created.Actor == nil || *created.Actor != "jrdn" {
-		t.Errorf("created actor = %v, want jrdn", created.Actor)
+	for _, want := range []struct{ id, title string }{
+		{first.ID, "first ticket"},
+		{second.ID, "second ticket"},
+	} {
+		created, ok := entry(task.ActivityCreated, want.id)
+		if !ok {
+			t.Fatalf("no created entry for %q: %+v", want.title, body.Activity)
+		}
+		if created.TaskTitle != want.title {
+			t.Errorf("created entry = %+v, want title %q", created, want.title)
+		}
+		if created.Actor == nil || *created.Actor != "jrdn" {
+			t.Errorf("created actor = %v, want jrdn", created.Actor)
+		}
 	}
 	for i := 1; i < len(body.Activity); i++ {
 		if body.Activity[i-1].At < body.Activity[i].At {
