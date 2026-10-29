@@ -4,6 +4,14 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  # The tag workflow tags with GITHUB_TOKEN, and a tag pushed that way does not
+  # start a run of its own, so it asks for the build explicitly:
+  #   gh workflow run image.yml --ref v0.0.9
+  workflow_dispatch:
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   publish:

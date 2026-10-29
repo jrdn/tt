@@ -14,6 +14,15 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # The release tagger reads commit messages, so its bump rules get their own
+  # tests: each case builds a throwaway repo and checks the version it picks.
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release version tests
+        run: python3 .github/scripts/test_next_version.py
+
   # Vet and unit tests: no services, so this stays the fast signal.
   unit:
     runs-on: ubuntu-latest

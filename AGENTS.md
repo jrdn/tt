@@ -14,6 +14,34 @@ CI (`.github/workflows/test.yml`) runs all of these on every pull request to
 end-to-end suite, each against a Postgres 17 service container where one is
 needed.
 
+## Commits and releases
+
+Release tags are automatic. Every push to `main` runs
+`.github/workflows/tag.yml`, which reads the commits since the last tag, picks
+the next `vX.Y.Z`, tags the commit and triggers the image build. Nothing is
+tagged by hand.
+
+The commit subject decides the bump, so write it as a Conventional Commit:
+
+| Subject | Bump |
+| --- | --- |
+| `fix: keep the project switcher sticky` | patch — `v0.0.8` → `v0.0.9` |
+| `feat: add deep links to tasks` | minor — `v0.0.8` → `v0.1.0` |
+| `feat!: drop the v1 API`, or a `BREAKING CHANGE:` footer | major — `v1.0.0` |
+| `docs:` `chore:` `ci:` `style:` `test:` `build:` | none on their own |
+| no type, e.g. `a0ssm4f: add an activity feed` | patch, so old-style commits still ship |
+
+- Put the tt task id in the body (`Task: a0ssm4f`), not in the subject. The
+  branch name `hermes/<task>-<slug>` keeps the task → PR link either way.
+- `Release-Type: minor` (on its own line, anywhere in the message) overrides the
+  guess, and `[skip release]` suppresses the release for that push entirely.
+- A push whose commits are all non-release types tags nothing, so a docs-only
+  change does not burn a version.
+- Bump the running server afterwards by hand: run `bump-all` in `jrdn/config`,
+  which defaults to the newest tag here.
+- The rules and their tests live in `.github/scripts/next_version.py` and
+  `.github/scripts/test_next_version.py`.
+
 ## tt Task Manager
 
 This project uses **tt** for task tracking. Tasks live in a local SQLite database at `~/.config/tt/<repo>.db`.

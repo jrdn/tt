@@ -329,3 +329,12 @@ No sync backend here provides true conflict resolution for simultaneous writes f
 In practice this is rare if you're switching between machines rather than using both simultaneously. S3 versioning and Litestream both provide recovery options if you do overwrite something you didn't mean to.
 
 If true offline peer sync with conflict resolution is a hard requirement, reconsider this tool.
+
+## Releases
+
+Versions are tagged automatically from the commits merged to `main`: `feat:`
+bumps the minor, `fix:` and the like bump the patch, `feat!:` or a
+`BREAKING CHANGE:` footer bumps the major, and a push of only `docs:`, `chore:`,
+`ci:`, `style:`, `test:` or `build:` commits cuts no release at all. Each tag
+publishes `ghcr.io/jrdn/tt:<version>` (multi-arch) plus a `sha-<short>` image for
+every push. The convention is spelled out in [AGENTS.md](AGENTS.md).
