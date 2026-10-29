@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -263,6 +264,54 @@ func TestDashboardIssueOpensInAllProjectsMode(t *testing.T) {
 	}
 	if !strings.Contains(search, "task=") || !strings.Contains(search, "project=beta") {
 		t.Errorf("location.search = %q, want the task and its project", search)
+	}
+}
+
+// TestDashboardActivityPaginates checks the dashboard's activity panel shows
+// one short page of the feed and pages back through the rest.
+func TestDashboardActivityPaginates(t *testing.T) {
+	ctx, url := newBrowser(t)
+	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitVisible("#dash-btn")); err != nil {
+		t.Fatal(err)
+	}
+	await := func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }
+	for i := 0; i < 10; i++ {
+		var ok bool
+		if err := chromedp.Run(ctx, chromedp.Evaluate(
+			`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title: 'page task `+strconv.Itoa(i)+`'})}).then(r => r.ok)`,
+			&ok, await)); err != nil || !ok {
+			t.Fatalf("create task %d: %v %v", i, ok, err)
+		}
+	}
+	var rows, pager string
+	var newerDisabled bool
+	if err := chromedp.Run(ctx,
+		chromedp.Click("#dash-btn", chromedp.ByID),
+		chromedp.Poll(`document.querySelector('.dash-activity-pager') !== null`, nil),
+		chromedp.Evaluate(`String(document.querySelectorAll('#dash-activity-rows .activity-row').length)`, &rows),
+		chromedp.Evaluate(`document.querySelector('.dash-activity-pager').innerText.replace(/\s+/g, ' ').trim()`, &pager),
+		chromedp.Evaluate(`document.querySelector('.dash-activity-pager button').disabled`, &newerDisabled),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if rows != "5" {
+		t.Errorf("activity rows on the first page = %s, want 5", rows)
+	}
+	if !strings.Contains(pager, "1–5 of ") {
+		t.Errorf("pager = %q, want the first page range", pager)
+	}
+	if !newerDisabled {
+		t.Error("Newer is enabled on the first page")
+	}
+
+	if err := chromedp.Run(ctx,
+		chromedp.Click(".dash-activity-pager button:last-child", chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('.dash-activity-pager').innerText.replace(/\s+/g, ' ').trim()`, &pager),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(pager, "6–") {
+		t.Errorf("pager after Older = %q, want the second page range", pager)
 	}
 }
 
