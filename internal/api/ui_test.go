@@ -826,3 +826,35 @@ func TestCtrlKInsideFieldDoesNotResetNewTaskForm(t *testing.T) {
 		t.Errorf("description = %q after Ctrl-K in the field, want it untouched", kept)
 	}
 }
+
+// TestQuestionMarkShowsKeyboardHelp checks "?" opens the shortcut list, Escape
+// closes it, and typing "?" in a field leaves it alone.
+func TestQuestionMarkShowsKeyboardHelp(t *testing.T) {
+	ctx, url := newBrowser(t)
+	const open = `document.getElementById('help-overlay').classList.contains('open')`
+	key := func(target, k string) string {
+		return `(` + target + `).dispatchEvent(new KeyboardEvent('keydown', {key: '` + k + `', bubbles: true}))`
+	}
+	var inField, afterQ, afterEsc bool
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url),
+		chromedp.WaitVisible(`button[onclick="openNewTask()"]`),
+		chromedp.Evaluate(key(`document.getElementById('search-input')`, "?"), nil),
+		chromedp.Evaluate(open, &inField),
+		chromedp.Evaluate(key(`document.body`, "?"), nil),
+		chromedp.Evaluate(open, &afterQ),
+		chromedp.Evaluate(key(`document.body`, "Escape"), nil),
+		chromedp.Evaluate(open, &afterEsc),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if inField {
+		t.Error("? typed in the search box opened the help")
+	}
+	if !afterQ {
+		t.Error("? did not open the help")
+	}
+	if afterEsc {
+		t.Error("Escape did not close the help")
+	}
+}
