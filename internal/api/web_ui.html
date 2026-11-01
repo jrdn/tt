@@ -858,6 +858,17 @@ main {
   box-shadow: 0 20px 60px rgba(0,0,0,0.25);
   overflow: hidden;
 }
+.help-modal { width: 480px; }
+.help-keys { border-collapse: collapse; font-size: 13px; color: var(--text); }
+.help-keys td { padding: 5px 0; vertical-align: top; }
+.help-keys td:first-child { white-space: nowrap; padding-right: 20px; }
+.help-keys kbd {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font: 12px ui-monospace, monospace;
+  background: var(--input-bg);
+}
 .modal-header {
   display: flex;
   align-items: center;
@@ -993,6 +1004,23 @@ main {
     <div class="modal-footer">
       <button class="btn btn-cancel" onclick="closeNewTask()">Cancel</button>
       <button class="btn btn-primary" id="nt-submit" onclick="submitNewTask()">Create Task</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="help-overlay" onclick="if (event.target === this) closeHelp()">
+  <div class="modal help-modal" role="dialog" aria-label="Keyboard shortcuts" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title">Keyboard shortcuts</div>
+      <button class="modal-close" onclick="closeHelp()">×</button>
+    </div>
+    <div class="modal-body">
+      <table class="help-keys">
+        <tr><td><kbd>?</kbd></td><td>Show this help</td></tr>
+        <tr><td><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>K</kbd></td><td>New task (not while typing in a field, where Ctrl-K kills the line)</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Close a popup, cancel an edit</td></tr>
+        <tr><td><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd></td><td>Pick a result when linking related tasks</td></tr>
+      </table>
     </div>
   </div>
 </div>
@@ -2361,6 +2389,14 @@ async function submitNewTask() {
   }
 }
 
+function openHelp() {
+  document.getElementById('help-overlay').classList.add('open');
+}
+
+function closeHelp() {
+  document.getElementById('help-overlay').classList.remove('open');
+}
+
 function isEditing(el) {
   return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 }
@@ -2368,6 +2404,7 @@ function isEditing(el) {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closeNewTask();
+    closeHelp();
     closeRecent();
     if (dashOpen) toggleDashboard(false);
   }
@@ -2376,6 +2413,10 @@ document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'k' && !isEditing(e.target)) {
     e.preventDefault();
     openNewTask();
+  }
+  if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey && !isEditing(e.target)) {
+    e.preventDefault();
+    openHelp();
   }
 });
 
