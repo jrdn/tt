@@ -22,7 +22,15 @@ import (
 // type in a tracker — tables, strikethrough, task lists — and its Linkify
 // extension turns bare URLs in descriptions and comments into anchors, which
 // is what they expect when they paste a link.
-var md = goldmark.New(goldmark.WithExtensions(extension.GFM))
+//
+// The stock URL pattern swallows a closing parenthesis, so "(PR https://x/1)"
+// linked to "https://x/1)". This one only keeps parentheses that are balanced
+// inside the URL, as in wikipedia.org/wiki/Go_(language).
+var md = goldmark.New(goldmark.WithExtensions(
+	extension.NewLinkify(extension.WithLinkifyURLRegexp(
+		regexp.MustCompile(`^(?:https?|ftp)://(?:[^\s<()]|\([^\s<()]*\))+`))),
+	extension.Table, extension.Strikethrough, extension.TaskList,
+))
 
 // anchorHref matches the anchors goldmark emits for links and autolinks.
 var anchorHref = regexp.MustCompile(`<a href="([^"]*)"`)
