@@ -772,3 +772,30 @@ func TestTaskDeepLink(t *testing.T) {
 		t.Errorf("location.search = %q after going back, want no task", search)
 	}
 }
+
+// TestRelationRowsShowTitleAndStatus checks a relation row shows the related
+// task's title and status, not just the relation type and id.
+func TestRelationRowsShowTitleAndStatus(t *testing.T) {
+	ctx, url := newBrowser(t)
+	var row string
+	data := `{task: {id: 'aaaa', title: 'one', status: 'open', priority: 2, created_at: '2026-01-01', updated_at: '2026-01-01'},
+		subtasks: [], comments: [], external_refs: [], description_html: '',
+		relations: [{from_id: 'aaaa', to_id: 'bbbb', type: 'related'}],
+		related_tasks: {bbbb: {title: 'The other one', status: 'in_review', priority: 1}}}`
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url),
+		chromedp.WaitVisible(`button[onclick="openNewTask()"]`),
+		chromedp.Evaluate(`renderTaskDetail(`+data+`)`, nil),
+		chromedp.Evaluate(`document.querySelector('.rel-type').parentElement.textContent.replace(/\s+/g, ' ')`, &row),
+	); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"related", "The other one", "bbbb"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("relation row %q missing %q", row, want)
+		}
+	}
+	if !strings.Contains(strings.ToLower(row), "review") {
+		t.Errorf("relation row %q does not show the status", row)
+	}
+}

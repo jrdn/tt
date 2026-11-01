@@ -1802,6 +1802,7 @@ function renderTaskDetail(data) {
   relSearchResults = [];
   relFocusIdx      = -1;
   const {task: t, subtasks, relations, comments, description_html} = data;
+  const relatedTasks = data.related_tasks || {};
   const statusColor = STATUS_COLORS[t.status] || '#9ca3af';
   const savedAuthor = localStorage.getItem('tt-author') || '';
 
@@ -1851,11 +1852,13 @@ function renderTaskDetail(data) {
         const isFrom  = r.from_id === t.id;
         const relType = isFrom ? r.type : inverseRelType(r.type);
         const otherId = isFrom ? r.to_id : r.from_id;
+        const other   = relatedTasks[otherId];
         const rmArgs  = `'${esc(r.from_id)}','${esc(r.type)}','${esc(r.to_id)}','${esc(t.id)}'`;
         return `
           <div class="list-item" onclick="selectTask('${esc(otherId)}')">
             <span class="rel-type">${esc(relType)}</span>
-            <span class="list-item-title"></span>
+            ${other ? priSpan(other.priority) + ' ' + badge(other.status) : ''}
+            <span class="list-item-title">${other ? esc(other.title) : ''}</span>
             <span class="meta-mono" style="color:#374151">${esc(qid(otherId))}</span>
             <button class="rel-remove" onclick="event.stopPropagation();removeRelation(${rmArgs})" title="Remove relation">×</button>
           </div>`;
