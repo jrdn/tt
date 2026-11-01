@@ -772,3 +772,30 @@ func TestTaskDeepLink(t *testing.T) {
 		t.Errorf("location.search = %q after going back, want no task", search)
 	}
 }
+
+// TestCtrlKInsideFieldDoesNotResetNewTaskForm checks Ctrl-K is left to the
+// text field (kill line) rather than reopening, and so clearing, the form.
+func TestCtrlKInsideFieldDoesNotResetNewTaskForm(t *testing.T) {
+	ctx, url := newBrowser(t)
+	var kept string
+	var openedOutside bool
+	press := `document.getElementById('nt-desc').dispatchEvent(new KeyboardEvent('keydown', {key: 'k', ctrlKey: true, bubbles: true}))`
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url),
+		chromedp.WaitVisible(`button[onclick="openNewTask()"]`),
+		chromedp.Evaluate(`document.body.dispatchEvent(new KeyboardEvent('keydown', {key: 'k', ctrlKey: true, bubbles: true}))`, nil),
+		chromedp.Poll(`document.getElementById('new-task-overlay').classList.contains('open')`, nil),
+		chromedp.Evaluate(`document.getElementById('new-task-overlay').classList.contains('open')`, &openedOutside),
+		chromedp.Evaluate(`document.getElementById('nt-desc').value = 'half-written'`, nil),
+		chromedp.Evaluate(press, nil),
+		chromedp.Evaluate(`document.getElementById('nt-desc').value`, &kept),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !openedOutside {
+		t.Error("Ctrl-K outside a field should open the new-ticket form")
+	}
+	if kept != "half-written" {
+		t.Errorf("description = %q after Ctrl-K in the field, want it untouched", kept)
+	}
+}

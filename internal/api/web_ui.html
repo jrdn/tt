@@ -2361,13 +2361,19 @@ async function submitNewTask() {
   }
 }
 
+function isEditing(el) {
+  return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+}
+
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closeNewTask();
     closeRecent();
     if (dashOpen) toggleDashboard(false);
   }
-  if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+  // Ctrl-K is "kill line" in a text field (emacs, and native on macOS), so it
+  // only opens the new-ticket form when no field is being edited.
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k' && !isEditing(e.target)) {
     e.preventDefault();
     openNewTask();
   }
