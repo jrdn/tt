@@ -111,13 +111,21 @@ type webCommentDetail struct {
 	BodyHTML string `json:"body_html"`
 }
 
+// relatedTask is the part of a related task the relations list shows.
+type relatedTask struct {
+	Title    string `json:"title"`
+	Status   string `json:"status"`
+	Priority int    `json:"priority"`
+}
+
 type webTaskDetail struct {
-	Task            *task.Task         `json:"task"`
-	Subtasks        []task.Task        `json:"subtasks"`
-	Relations       []task.Relation    `json:"relations"`
-	Comments        []webCommentDetail `json:"comments"`
-	ExternalRefs    []task.ExternalRef `json:"external_refs"`
-	DescriptionHTML string             `json:"description_html"`
+	Task            *task.Task             `json:"task"`
+	Subtasks        []task.Task            `json:"subtasks"`
+	Relations       []task.Relation        `json:"relations"`
+	RelatedTasks    map[string]relatedTask `json:"related_tasks"`
+	Comments        []webCommentDetail     `json:"comments"`
+	ExternalRefs    []task.ExternalRef     `json:"external_refs"`
+	DescriptionHTML string                 `json:"description_html"`
 }
 
 // Version is the tt build version shown in the header of the web UI. The
@@ -192,6 +200,16 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 	if rels == nil {
 		rels = []task.Relation{}
 	}
+	related := map[string]relatedTask{}
+	for _, rel := range rels {
+		other := rel.ToID
+		if other == t.ID {
+			other = rel.FromID
+		}
+		if o, err := st.Get(r.Context(), other); err == nil {
+			related[other] = relatedTask{Title: o.Title, Status: string(o.Status), Priority: o.Priority}
+		}
+	}
 	rawComments, _ := st.GetComments(r.Context(), t.ID)
 	refs, _ := st.GetExternalRefs(r.Context(), t.ID)
 	if refs == nil {
@@ -212,6 +230,7 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		Task:            t,
 		Subtasks:        subtasks,
 		Relations:       rels,
+		RelatedTasks:    related,
 		Comments:        comments,
 		ExternalRefs:    refs,
 		DescriptionHTML: descHTML,
