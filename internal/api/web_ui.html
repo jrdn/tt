@@ -875,6 +875,8 @@ main {
   padding: 0 2px;
 }
 .modal-close:hover { color: var(--text-2); }
+#keys-table td { padding: 3px 12px 3px 0; font-size: 13px; }
+#keys-table kbd { font-family: monospace; border: 1px solid var(--border, #ccc); border-radius: 3px; padding: 1px 5px; }
 .modal-body {
   padding: 20px;
   display: flex;
@@ -993,6 +995,28 @@ main {
     <div class="modal-footer">
       <button class="btn btn-cancel" onclick="closeNewTask()">Cancel</button>
       <button class="btn btn-primary" id="nt-submit" onclick="submitNewTask()">Create Task</button>
+    </div>
+  </div>
+</div>
+
+<!-- Keyboard shortcuts help -->
+<div class="modal-overlay" id="keys-overlay" onclick="toggleKeysHelp(false)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title">Keyboard shortcuts</div>
+      <button class="modal-close" onclick="toggleKeysHelp(false)">×</button>
+    </div>
+    <div class="modal-body">
+      <table id="keys-table">
+        <tr><td><kbd>j</kbd> / <kbd>k</kbd></td><td>Next / previous task</td></tr>
+        <tr><td><kbd>/</kbd></td><td>Search</td></tr>
+        <tr><td><kbd>n</kbd></td><td>New task</td></tr>
+        <tr><td><kbd>s</kbd></td><td>Change status of the open task</td></tr>
+        <tr><td><kbd>c</kbd></td><td>Comment on the open task</td></tr>
+        <tr><td><kbd>d</kbd></td><td>Toggle dashboard</td></tr>
+        <tr><td><kbd>?</kbd></td><td>This help</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Close a dialog, or leave a field</td></tr>
+      </table>
     </div>
   </div>
 </div>
@@ -2364,15 +2388,49 @@ async function submitNewTask() {
   }
 }
 
+function toggleKeysHelp(force) {
+  const el = document.getElementById('keys-overlay');
+  el.classList.toggle('open', force === undefined ? !el.classList.contains('open') : force);
+}
+
+// Move the selection through the sidebar list by one task.
+function stepTask(delta) {
+  const items = [...document.querySelectorAll('.task-list .task-item')];
+  if (!items.length) return;
+  const cur = items.findIndex(el => el.classList.contains('active'));
+  const next = items[Math.max(0, Math.min(items.length - 1, cur < 0 ? 0 : cur + delta))];
+  next.click();
+  next.scrollIntoView({block: 'nearest'});
+}
+
+const inField = t => t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName));
+
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closeNewTask();
     closeRecent();
+    toggleKeysHelp(false);
     if (dashOpen) toggleDashboard(false);
+    if (inField(e.target)) e.target.blur();
+    return;
   }
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
     e.preventDefault();
     openNewTask();
+    return;
+  }
+  // Single-key shortcuts only fire outside fields and without modifiers.
+  if (e.metaKey || e.ctrlKey || e.altKey || inField(e.target)) return;
+  const focus = id => { const el = document.getElementById(id); if (el) { e.preventDefault(); el.focus(); } };
+  switch (e.key) {
+    case 'j': stepTask(1); break;
+    case 'k': stepTask(-1); break;
+    case '/': focus('search-input'); break;
+    case 'n': e.preventDefault(); openNewTask(); break;
+    case 's': focus('status-sel'); break;
+    case 'c': focus('comment-body'); break;
+    case 'd': toggleDashboard(); break;
+    case '?': toggleKeysHelp(); break;
   }
 });
 

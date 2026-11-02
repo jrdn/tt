@@ -799,3 +799,32 @@ func TestRelationRowsShowTitleAndStatus(t *testing.T) {
 		t.Errorf("relation row %q does not show the status", row)
 	}
 }
+
+func TestKeyboardShortcuts(t *testing.T) {
+	ctx, url := newBrowser(t)
+	var helpOpen, formOpen, typedIntoField bool
+	press := `(k, el) => (el || document).dispatchEvent(new KeyboardEvent('keydown', {key: k, bubbles: true}))`
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url),
+		chromedp.WaitVisible(`button[onclick="openNewTask()"]`),
+		chromedp.Evaluate(`(`+press+`)('?')`, nil),
+		chromedp.Evaluate(`document.getElementById('keys-overlay').classList.contains('open')`, &helpOpen),
+		chromedp.Evaluate(`(`+press+`)('Escape')`, nil),
+		// A key typed into a field must not trigger a shortcut.
+		chromedp.Evaluate(`(`+press+`)('n', document.getElementById('search-input'))`, nil),
+		chromedp.Evaluate(`document.getElementById('new-task-overlay').classList.contains('open')`, &typedIntoField),
+		chromedp.Evaluate(`(`+press+`)('n')`, nil),
+		chromedp.Evaluate(`document.getElementById('new-task-overlay').classList.contains('open')`, &formOpen),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !helpOpen {
+		t.Error("? did not open the shortcuts help")
+	}
+	if typedIntoField {
+		t.Error("n typed into the search box opened the new-task form")
+	}
+	if !formOpen {
+		t.Error("n did not open the new-task form")
+	}
+}
