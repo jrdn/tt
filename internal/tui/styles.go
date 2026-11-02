@@ -93,6 +93,8 @@ func statusIcon(s string) string {
 		return "◇"
 	case "in_progress":
 		return "◐"
+	case "blocked":
+		return "⊘"
 	case "in_review":
 		return "◑"
 	case "done":
@@ -107,6 +109,8 @@ func statusIcon(s string) string {
 func sectionStyle(status string) lipgloss.Style {
 	switch status {
 	case "in_progress":
+		return styleSectionInProgress
+	case "blocked":
 		return styleSectionInProgress
 	case "in_review":
 		return styleSectionReview

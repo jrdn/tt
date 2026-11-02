@@ -29,7 +29,7 @@ type listModel struct {
 	includeDone bool
 }
 
-var statusOrder = []string{"ready", "in_progress", "in_review", "open", "backlog"}
+var statusOrder = []string{"ready", "in_progress", "blocked", "in_review", "open", "backlog"}
 var doneStatuses = map[string]bool{"done": true, "cancelled": true}
 
 func newListModel(tasks []task.Task, width, height int, includeDone bool) listModel {

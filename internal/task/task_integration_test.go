@@ -556,7 +556,7 @@ func TestUpdate_InvalidStatus(t *testing.T) {
 
 func TestUpdate_ValidStatuses(t *testing.T) {
 	d := openTestDB(t)
-	validStatuses := []Status{StatusBacklog, StatusOpen, StatusReady, StatusInProgress, StatusInReview, StatusDone, StatusCancelled}
+	validStatuses := []Status{StatusBacklog, StatusOpen, StatusReady, StatusInProgress, StatusBlocked, StatusInReview, StatusDone, StatusCancelled}
 	for _, s := range validStatuses {
 		task, _ := Create(d, "task", CreateOpts{})
 		st := s
