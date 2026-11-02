@@ -1017,9 +1017,15 @@ main {
     </div>
     <div class="modal-body">
       <table class="help-keys">
+        <tr><td><kbd>j</kbd> / <kbd>k</kbd></td><td>Next / previous task</td></tr>
+        <tr><td><kbd>n</kbd></td><td>New task</td></tr>
+        <tr><td><kbd>/</kbd></td><td>Search</td></tr>
+        <tr><td><kbd>s</kbd></td><td>Status of the open task</td></tr>
+        <tr><td><kbd>c</kbd></td><td>Comment on the open task</td></tr>
+        <tr><td><kbd>d</kbd></td><td>Toggle the dashboard</td></tr>
         <tr><td><kbd>?</kbd></td><td>Show this help</td></tr>
         <tr><td><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>K</kbd></td><td>New task (not while typing in a field, where Ctrl-K kills the line)</td></tr>
-        <tr><td><kbd>Esc</kbd></td><td>Close a popup, cancel an edit</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Close a popup or field, cancel an edit</td></tr>
         <tr><td><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd></td><td>Pick a result when linking related tasks</td></tr>
       </table>
     </div>
@@ -2409,23 +2415,64 @@ function isEditing(el) {
   return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 }
 
+// An open dialog or popup owns the keyboard: single-key shortcuts stay quiet so
+// a stray letter cannot reset a half-written form.
+function overlayOpen() {
+  return !!document.querySelector('.modal-overlay.open');
+}
+
+// Move the selection through the sidebar list by one task.
+function stepTask(delta) {
+  const items = [...document.querySelectorAll('#task-list .task-item')];
+  if (!items.length) return;
+  const cur = items.findIndex(el => el.classList.contains('active'));
+  const next = items[Math.max(0, Math.min(items.length - 1, cur < 0 ? 0 : cur + delta))];
+  next.click();
+  next.scrollIntoView({block: 'nearest'});
+}
+
+// Focus an element by id; false when it is not on screen (nothing to fall back to).
+function focusById(id) {
+  const el = document.getElementById(id);
+  if (!el) return false;
+  el.focus();
+  return true;
+}
+
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closeNewTask();
     closeHelp();
     closeRecent();
     if (dashOpen) toggleDashboard(false);
+    // Blur last, so Escape closes a dialog before it drops focus.
+    if (isEditing(e.target) && !overlayOpen()) e.target.blur();
+    return;
   }
   // Ctrl-K is "kill line" in a text field (emacs, and native on macOS), so it
   // only opens the new-ticket form when no field is being edited.
   if ((e.metaKey || e.ctrlKey) && e.key === 'k' && !isEditing(e.target)) {
     e.preventDefault();
     openNewTask();
+    return;
   }
-  if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey && !isEditing(e.target)) {
-    e.preventDefault();
-    openHelp();
+  // Single-key shortcuts only fire outside fields, without modifiers, and with
+  // no dialog open. Shift is left alone: a shifted key arrives as its own
+  // character ("?"), which the switch below matches by value.
+  if (e.metaKey || e.ctrlKey || e.altKey || isEditing(e.target) || overlayOpen()) return;
+  let handled = true;
+  switch (e.key) {
+    case 'j': stepTask(1); break;
+    case 'k': stepTask(-1); break;
+    case '/': handled = focusById('search-input'); break;
+    case 'n': openNewTask(); break;
+    case 's': handled = focusById('status-sel'); break;
+    case 'c': handled = focusById('comment-body'); break;
+    case 'd': toggleDashboard(); break;
+    case '?': openHelp(); break;
+    default: handled = false;
   }
+  if (handled) e.preventDefault();
 });
 
 // ── Sidebar splitter ───────────────────────────────────────
