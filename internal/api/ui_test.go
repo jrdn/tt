@@ -523,7 +523,7 @@ func TestLocalModeCommentBoxStillAsks(t *testing.T) {
 	var footer string
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
-		chromedp.WaitVisible("#task-list"),
+		chromedp.WaitVisible("#task-list", chromedp.ByQuery),
 		chromedp.Evaluate(`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title:'c task'})}).then(r => r.ok)`, nil,
 			func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
 		chromedp.Evaluate(`loadTasks()`, nil),
@@ -555,7 +555,7 @@ func TestStatusControlReadsAsDropdown(t *testing.T) {
 	var box []float64
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
-		chromedp.WaitVisible("#task-list"),
+		chromedp.WaitVisible("#task-list", chromedp.ByQuery),
 		chromedp.Evaluate(`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title:'status task', status:'in_progress'})}).then(r => r.ok)`, nil,
 			func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
 		chromedp.Evaluate(`loadTasks()`, nil),
@@ -611,7 +611,7 @@ func TestCommentMarkdownIsRenderedAndStaysInItsCard(t *testing.T) {
 	var overflow []float64
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
-		chromedp.WaitVisible("#task-list"),
+		chromedp.WaitVisible("#task-list", chromedp.ByQuery),
 		chromedp.Evaluate(`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title:'md task', description:`+
 			jsString(desc)+`})}).then(r => r.json())`, nil,
 			func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
