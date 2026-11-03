@@ -932,3 +932,89 @@ func TestSingleKeyShortcuts(t *testing.T) {
 		t.Error("/ did not focus the search box")
 	}
 }
+
+// TestCtrlEnterSubmitsTheTypedForm checks Ctrl/Cmd-Enter posts the comment being
+// written and creates the task being written, without touching the buttons —
+// and that plain Enter is left to the textarea.
+func TestCtrlEnterSubmitsTheTypedForm(t *testing.T) {
+	ctx, url := newBrowser(t)
+	// One script drives the whole flow: every step waits for the DOM it needs,
+	// and a failure points at the step that never happened.
+	const script = `
+	(async () => {
+		const sleep = ms => new Promise(r => setTimeout(r, ms));
+		const waitFor = async (fn, ms = 5000) => {
+			const end = Date.now() + ms;
+			while (Date.now() < end) { const v = fn(); if (v) return v; await sleep(50); }
+			return null;
+		};
+		const ctrlEnter = el => el.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', ctrlKey: true, bubbles: true}));
+		const out = {step: 'seed'};
+		await fetch('/api/tasks', {method: 'POST', body: JSON.stringify({title: 'ctrl-enter target'})});
+		out.step = 'list';
+		await loadTasks();
+		const item = await waitFor(() => document.querySelector('.task-item'));
+		if (!item) return out;
+		out.step = 'open';
+		item.click();
+		const box = await waitFor(() => document.getElementById('comment-body'));
+		if (!box) return out;
+
+		// Plain Enter stays a newline.
+		out.step = 'plain-enter';
+		box.value = 'line one';
+		box.focus();
+		box.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
+		await sleep(400);
+		out.plainEnterPosted = document.querySelectorAll('.comment-card').length > 0;
+
+		out.step = 'ctrl-enter-comment';
+		const author = document.getElementById('comment-author');
+		if (author) author.value = 'tester';
+		document.getElementById('comment-body').value = 'written with ctrl-enter';
+		ctrlEnter(document.getElementById('comment-body'));
+		out.commentPosted = !!(await waitFor(() =>
+			[...document.querySelectorAll('.comment-card')].find(c => c.innerText.includes('written with ctrl-enter'))));
+
+		out.step = 'ctrl-enter-task';
+		openNewTask();
+		if (!(await waitFor(() => document.getElementById('new-task-overlay').classList.contains('open')))) return out;
+		document.getElementById('nt-title').value = 'made with ctrl-enter';
+		ctrlEnter(document.getElementById('nt-title'));
+		out.taskListed = !!(await waitFor(() =>
+			[...document.querySelectorAll('#task-list .task-item')].find(el => el.innerText.includes('made with ctrl-enter'))));
+		out.formOpen = document.getElementById('new-task-overlay').classList.contains('open');
+		out.step = 'done';
+		return out;
+	})()`
+	var out struct {
+		Step             string `json:"step"`
+		PlainEnterPosted bool   `json:"plainEnterPosted"`
+		CommentPosted    bool   `json:"commentPosted"`
+		TaskListed       bool   `json:"taskListed"`
+		FormOpen         bool   `json:"formOpen"`
+	}
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url),
+		chromedp.WaitVisible("#task-list", chromedp.ByQuery),
+		chromedp.Evaluate(script, &out,
+			func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if out.Step != "done" {
+		t.Fatalf("flow stopped at step %q: %+v", out.Step, out)
+	}
+	if out.PlainEnterPosted {
+		t.Error("plain Enter submitted the comment, want a newline")
+	}
+	if !out.CommentPosted {
+		t.Error("ctrl-enter did not post the comment")
+	}
+	if !out.TaskListed {
+		t.Error("ctrl-enter did not create the task")
+	}
+	if out.FormOpen {
+		t.Error("ctrl-enter left the new-task form open")
+	}
+}

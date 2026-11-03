@@ -1025,6 +1025,7 @@ main {
         <tr><td><kbd>d</kbd></td><td>Toggle the dashboard</td></tr>
         <tr><td><kbd>?</kbd></td><td>Show this help</td></tr>
         <tr><td><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>K</kbd></td><td>New task (not while typing in a field, where Ctrl-K kills the line)</td></tr>
+        <tr><td><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd></td><td>Submit the comment or new task you are typing</td></tr>
         <tr><td><kbd>Esc</kbd></td><td>Close a popup or field, cancel an edit</td></tr>
         <tr><td><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd></td><td>Pick a result when linking related tasks</td></tr>
       </table>
@@ -2230,7 +2231,11 @@ async function removeRelation(fromId, relType, toId, taskId) {
 }
 
 // ── Comments ───────────────────────────────────────────────
+// Ctrl-Enter can fire faster than the round trip; one post per press.
+let commentSubmitting = false;
+
 async function submitComment(id) {
+  if (commentSubmitting) return;
   const bodyEl   = document.getElementById('comment-body');
   const authorEl = document.getElementById('comment-author');
   const body     = bodyEl.value.trim();
@@ -2244,12 +2249,17 @@ async function submitComment(id) {
   const btn = document.querySelector('#main .btn-primary');
   if (btn) btn.disabled = true;
 
-  await apiFetch(API + '/tasks/' + encodeURIComponent(id) + '/comments', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({body, author: author || null}),
-  });
-  await loadTask(id);
+  commentSubmitting = true;
+  try {
+    await apiFetch(API + '/tasks/' + encodeURIComponent(id) + '/comments', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({body, author: author || null}),
+    });
+    await loadTask(id);
+  } finally {
+    commentSubmitting = false;
+  }
 }
 
 function inverseRelType(t) {
@@ -2370,6 +2380,7 @@ async function submitNewTask() {
   if (assignee) localStorage.setItem('tt-author', assignee);
 
   const btn = document.getElementById('nt-submit');
+  if (btn.disabled) return; // a second Ctrl-Enter while the create is in flight
   btn.disabled = true;
   try {
     const payload = {title, priority, status};
@@ -2448,6 +2459,21 @@ document.addEventListener('keydown', e => {
     // Blur last, so Escape closes a dialog before it drops focus.
     if (isEditing(e.target) && !overlayOpen()) e.target.blur();
     return;
+  }
+  // Ctrl/Cmd-Enter submits the form being typed in — a comment, or a new task
+  // from its title/description. Plain Enter still inserts a newline.
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    const id = e.target && e.target.id;
+    if (id === 'comment-body') {
+      e.preventDefault();
+      if (currentTaskData && currentTaskData.task) submitComment(currentTaskData.task.id);
+      return;
+    }
+    if (id === 'nt-title' || id === 'nt-desc') {
+      e.preventDefault();
+      submitNewTask();
+      return;
+    }
   }
   // Ctrl-K is "kill line" in a text field (emacs, and native on macOS), so it
   // only opens the new-ticket form when no field is being edited.
