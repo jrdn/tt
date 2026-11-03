@@ -74,7 +74,7 @@ func NewModel(store task.Store) Model {
 	m := Model{
 		store:         store,
 		view:          viewList,
-		statusChoices: []string{"open", "backlog", "ready", "in_progress", "in_review", "done", "cancelled"},
+		statusChoices: []string{"open", "backlog", "ready", "in_progress", "blocked", "in_review", "done", "cancelled"},
 	}
 	if sub, ok := store.(task.Subscriber); ok {
 		// Best effort: without it the TUI still refreshes after its own actions.

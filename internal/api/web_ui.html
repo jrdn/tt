@@ -982,6 +982,7 @@ main {
             <option value="backlog">Backlog</option>
             <option value="ready">Ready</option>
             <option value="in_progress">In Progress</option>
+            <option value="blocked">Blocked</option>
           </select>
         </div>
         <div class="form-field">
@@ -1374,6 +1375,7 @@ const STATUS_COLORS = {
   open:        '#3b82f6',
   ready:       '#0ea5e9',
   in_progress: '#f59e0b',
+  blocked:     '#ef4444',
   in_review:   '#8b5cf6',
   done:        '#10b981',
   cancelled:   '#6b7280',
@@ -1383,6 +1385,7 @@ const STATUS_LABELS = {
   open:        'Open',
   ready:       'Ready',
   in_progress: 'In Progress',
+  blocked:     'Blocked',
   in_review:   'In Review',
   done:        'Done',
   cancelled:   'Cancelled',
@@ -1392,11 +1395,12 @@ const STATUS_ICONS = {
   open:        '◇',
   ready:       '●',
   in_progress: '◐',
+  blocked:     '⊘',
   in_review:   '◑',
   done:        '✓',
   cancelled:   '✕',
 };
-const ALL_STATUSES  = ['open','ready','in_progress','in_review','backlog','done','cancelled'];
+const ALL_STATUSES  = ['open','ready','in_progress','blocked','in_review','backlog','done','cancelled'];
 const PRI_CHARS     = ['●','◕','◑','◔'];
 const PRI_COLORS    = ['#ef4444','#f59e0b','#9ca3af','#d1d5db'];
 const PRI_LABELS    = ['Critical','High','Normal','Low'];
@@ -1406,6 +1410,7 @@ const FILTERS = [
   {label:'Open',        value:'open'},
   {label:'Ready',       value:'ready'},
   {label:'In Progress', value:'in_progress'},
+  {label:'Blocked',     value:'blocked'},
   {label:'In Review',   value:'in_review'},
   {label:'Backlog',     value:'backlog'},
   {label:'Done',        value:'done'},

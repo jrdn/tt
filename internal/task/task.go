@@ -15,6 +15,7 @@ var validStatuses = map[Status]bool{
 	StatusOpen:       true,
 	StatusReady:      true,
 	StatusInProgress: true,
+	StatusBlocked:    true,
 	StatusInReview:   true,
 	StatusDone:       true,
 	StatusCancelled:  true,
@@ -22,7 +23,7 @@ var validStatuses = map[Status]bool{
 
 func validateStatus(s Status) error {
 	if !validStatuses[s] {
-		return fmt.Errorf("invalid status %q: must be one of backlog, open, ready, in_progress, in_review, done, cancelled", s)
+		return fmt.Errorf("invalid status %q: must be one of backlog, open, ready, in_progress, blocked, in_review, done, cancelled", s)
 	}
 	return nil
 }
@@ -82,6 +83,7 @@ const (
 	StatusOpen       Status = "open"
 	StatusReady      Status = "ready"
 	StatusInProgress Status = "in_progress"
+	StatusBlocked    Status = "blocked"
 	StatusInReview   Status = "in_review"
 	StatusDone       Status = "done"
 	StatusCancelled  Status = "cancelled"
@@ -281,7 +283,7 @@ func List(db *sqlx.DB, opts ListOpts) ([]Task, error) {
 		query += ` AND status = ?`
 		args = append(args, opts.Status)
 	} else if !opts.All {
-		query += ` AND status IN ('open', 'ready', 'in_progress', 'in_review')`
+		query += ` AND status IN ('open', 'ready', 'in_progress', 'blocked', 'in_review')`
 	}
 	if opts.Assignee != "" {
 		query += ` AND assignee = ?`

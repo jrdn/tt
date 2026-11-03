@@ -24,7 +24,7 @@ If the request does not say which project, run `tt project ls` and ask. Use `--j
 
 ```bash
 tt ls                              # open and in-progress tasks
-tt ls --status=ready               # also: backlog open ready in_progress in_review done cancelled
+tt ls --status=ready               # also: backlog open ready in_progress blocked in_review done cancelled
 tt show <id>                       # full detail, subtasks, relations, comments (read this first)
 tt search "words"                  # fuzzy search titles, descriptions, comments
 tt add "title" -d "details"        # create (-p 0 critical .. 3 low, --parent <id>)

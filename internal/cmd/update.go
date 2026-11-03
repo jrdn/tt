@@ -75,7 +75,7 @@ Each ID can be a plain task ID or a qualified ID (<project>.<task_id> or <projec
 		},
 	}
 
-	cmd.Flags().StringVarP(&status, "status", "s", "", "New status (backlog, open, ready, in_progress, in_review, done, cancelled)")
+	cmd.Flags().StringVarP(&status, "status", "s", "", "New status (backlog, open, ready, in_progress, blocked, in_review, done, cancelled)")
 	cmd.Flags().StringVarP(&title, "title", "t", "", "New title")
 	cmd.Flags().StringVarP(&description, "description", "d", "", "New description")
 	cmd.Flags().IntVarP(&priority, "priority", "p", 0, "New priority (0=critical, 3=low)")

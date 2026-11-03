@@ -266,7 +266,7 @@ on a server (--db is accepted as the project filter there too).`,
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.status, "status", "", "Filter by status (backlog, open, ready, in_progress, in_review, done, cancelled)")
+	cmd.Flags().StringVar(&opts.status, "status", "", "Filter by status (backlog, open, ready, in_progress, blocked, in_review, done, cancelled)")
 	cmd.Flags().StringVar(&opts.parentID, "parent", "", "Show subtasks of this task")
 	cmd.Flags().StringVarP(&opts.assignee, "assignee", "a", "", "Filter by assignee handle")
 	cmd.Flags().BoolVar(&opts.all, "all", false, "Include all statuses")

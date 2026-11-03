@@ -14,6 +14,7 @@ var (
 		task.StatusOpen:       color.New(color.FgCyan),
 		task.StatusReady:      color.New(color.FgYellow, color.Bold),
 		task.StatusInProgress: color.New(color.FgBlue, color.Bold),
+		task.StatusBlocked:    color.New(color.FgRed, color.Bold),
 		task.StatusInReview:   color.New(color.FgMagenta, color.Bold),
 		task.StatusDone:       color.New(color.FgGreen),
 		task.StatusCancelled:  color.New(color.Faint),
@@ -96,7 +97,7 @@ func newLsCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&status, "status", "", "Filter by status (backlog, open, ready, in_progress, in_review, done, cancelled)")
+	cmd.Flags().StringVar(&status, "status", "", "Filter by status (backlog, open, ready, in_progress, blocked, in_review, done, cancelled)")
 	cmd.Flags().StringVar(&parentID, "parent", "", "Show subtasks of this task")
 	cmd.Flags().StringVarP(&assignee, "assignee", "a", "", "Filter by assignee handle")
 	cmd.Flags().BoolVar(&all, "all", false, "Include all statuses")
