@@ -523,7 +523,7 @@ func TestLocalModeCommentBoxStillAsks(t *testing.T) {
 	var footer string
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
-		chromedp.WaitVisible("#task-list"),
+		chromedp.WaitVisible("#task-list", chromedp.ByQuery),
 		chromedp.Evaluate(`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title:'c task'})}).then(r => r.ok)`, nil,
 			func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
 		chromedp.Evaluate(`loadTasks()`, nil),
@@ -555,7 +555,7 @@ func TestStatusControlReadsAsDropdown(t *testing.T) {
 	var box []float64
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
-		chromedp.WaitVisible("#task-list"),
+		chromedp.WaitVisible("#task-list", chromedp.ByQuery),
 		chromedp.Evaluate(`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title:'status task', status:'in_progress'})}).then(r => r.ok)`, nil,
 			func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
 		chromedp.Evaluate(`loadTasks()`, nil),
@@ -611,7 +611,7 @@ func TestCommentMarkdownIsRenderedAndStaysInItsCard(t *testing.T) {
 	var overflow []float64
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
-		chromedp.WaitVisible("#task-list"),
+		chromedp.WaitVisible("#task-list", chromedp.ByQuery),
 		chromedp.Evaluate(`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title:'md task', description:`+
 			jsString(desc)+`})}).then(r => r.json())`, nil,
 			func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
@@ -856,5 +856,165 @@ func TestQuestionMarkShowsKeyboardHelp(t *testing.T) {
 	}
 	if afterEsc {
 		t.Error("Escape did not close the help")
+	}
+}
+
+// TestSingleKeyShortcuts covers j/k navigation, "/" search focus, and the rule
+// that a shortcut never fires while a dialog is open or a field has focus.
+func TestSingleKeyShortcuts(t *testing.T) {
+	ctx, url := newBrowser(t)
+	press := func(k string) string {
+		return `document.body.dispatchEvent(new KeyboardEvent('keydown', {key: '` + k + `', bubbles: true}))`
+	}
+	const activeIndex = `[...document.querySelectorAll('#task-list .task-item')].findIndex(el => el.classList.contains('active'))`
+	const helpOpen = `document.getElementById('help-overlay').classList.contains('open')`
+	const formOpen = `document.getElementById('new-task-overlay').classList.contains('open')`
+	var count, before, afterJ, afterK int
+	var seeded []bool
+	var listHTML string
+	var gotHelp, formStayedOpen, searchFocused bool
+	var movedWhileFormOpen int
+	await := func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url),
+		chromedp.WaitVisible(`button[onclick="openNewTask()"]`),
+		// Seed one at a time: concurrent POSTs to the test server race.
+		chromedp.Evaluate(`(async () => { const out = []; for (const title of ['one','two','three']) { const r = await fetch('/api/tasks', {method:'POST', body: JSON.stringify({title})}); out.push(r.ok); } return out; })()`, &seeded, await),
+		// Reload through CDP (not location.reload) so the list renders the seeded tasks.
+		// Poll, not WaitVisible: a selected task hides the sidebar on the narrow
+		// default viewport, so "visible" is the wrong test here.
+		chromedp.Navigate(url),
+		chromedp.Poll(`document.querySelector('#task-list .task-item') !== null`, nil),
+		chromedp.Evaluate(`document.querySelectorAll('#task-list .task-item').length`, &count),
+		chromedp.Evaluate(`document.getElementById('task-list').innerHTML.slice(0, 400)`, &listHTML),
+		chromedp.Evaluate(activeIndex, &before),
+		chromedp.Evaluate(press("j"), nil),
+		chromedp.Evaluate(activeIndex, &afterJ),
+		chromedp.Evaluate(press("k"), nil),
+		chromedp.Evaluate(activeIndex, &afterK),
+		// "?" opens the help; while it is open the list must not move.
+		chromedp.Evaluate(press("?"), nil),
+		chromedp.Evaluate(helpOpen, &gotHelp),
+		chromedp.Evaluate(press("j"), nil),
+		chromedp.Evaluate(activeIndex, &movedWhileFormOpen),
+		chromedp.Evaluate(press("Escape"), nil),
+		// A key with no dialog open still works, and "/" lands in search.
+		chromedp.Evaluate(press("n"), nil),
+		chromedp.Evaluate(formOpen, &formStayedOpen),
+		chromedp.Evaluate(press("Escape"), nil),
+		chromedp.Evaluate(press("/"), nil),
+		chromedp.Evaluate(`document.activeElement.id === 'search-input'`, &searchFocused),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if count < 3 {
+		t.Fatalf("seeded %v, %d tasks in the list; html=%s", seeded, count, listHTML)
+	}
+	// j moves one down from whatever is selected (or to the first task when
+	// nothing is); k moves one back up and stops at the top.
+	wantJ := max(before+1, 0)
+	if afterJ != wantJ {
+		t.Errorf("j: active index %d -> %d, want %d", before, afterJ, wantJ)
+	}
+	if wantK := max(afterJ-1, 0); afterK != wantK {
+		t.Errorf("k: active index %d, want %d", afterK, wantK)
+	}
+	if !gotHelp {
+		t.Error("? did not open the shortcuts help")
+	}
+	if movedWhileFormOpen != afterK {
+		t.Errorf("j with the help open moved the selection to %d", movedWhileFormOpen)
+	}
+	if !formStayedOpen {
+		t.Error("n did not open the new-task form")
+	}
+	if !searchFocused {
+		t.Error("/ did not focus the search box")
+	}
+}
+
+// TestCtrlEnterSubmitsTheTypedForm checks Ctrl/Cmd-Enter posts the comment being
+// written and creates the task being written, without touching the buttons —
+// and that plain Enter is left to the textarea.
+func TestCtrlEnterSubmitsTheTypedForm(t *testing.T) {
+	ctx, url := newBrowser(t)
+	// One script drives the whole flow: every step waits for the DOM it needs,
+	// and a failure points at the step that never happened.
+	const script = `
+	(async () => {
+		const sleep = ms => new Promise(r => setTimeout(r, ms));
+		const waitFor = async (fn, ms = 5000) => {
+			const end = Date.now() + ms;
+			while (Date.now() < end) { const v = fn(); if (v) return v; await sleep(50); }
+			return null;
+		};
+		const ctrlEnter = el => el.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', ctrlKey: true, bubbles: true}));
+		const out = {step: 'seed'};
+		await fetch('/api/tasks', {method: 'POST', body: JSON.stringify({title: 'ctrl-enter target'})});
+		out.step = 'list';
+		await loadTasks();
+		const item = await waitFor(() => document.querySelector('.task-item'));
+		if (!item) return out;
+		out.step = 'open';
+		item.click();
+		const box = await waitFor(() => document.getElementById('comment-body'));
+		if (!box) return out;
+
+		// Plain Enter stays a newline.
+		out.step = 'plain-enter';
+		box.value = 'line one';
+		box.focus();
+		box.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
+		await sleep(400);
+		out.plainEnterPosted = document.querySelectorAll('.comment-card').length > 0;
+
+		out.step = 'ctrl-enter-comment';
+		const author = document.getElementById('comment-author');
+		if (author) author.value = 'tester';
+		document.getElementById('comment-body').value = 'written with ctrl-enter';
+		ctrlEnter(document.getElementById('comment-body'));
+		out.commentPosted = !!(await waitFor(() =>
+			[...document.querySelectorAll('.comment-card')].find(c => c.innerText.includes('written with ctrl-enter'))));
+
+		out.step = 'ctrl-enter-task';
+		openNewTask();
+		if (!(await waitFor(() => document.getElementById('new-task-overlay').classList.contains('open')))) return out;
+		document.getElementById('nt-title').value = 'made with ctrl-enter';
+		ctrlEnter(document.getElementById('nt-title'));
+		out.taskListed = !!(await waitFor(() =>
+			[...document.querySelectorAll('#task-list .task-item')].find(el => el.innerText.includes('made with ctrl-enter'))));
+		out.formOpen = document.getElementById('new-task-overlay').classList.contains('open');
+		out.step = 'done';
+		return out;
+	})()`
+	var out struct {
+		Step             string `json:"step"`
+		PlainEnterPosted bool   `json:"plainEnterPosted"`
+		CommentPosted    bool   `json:"commentPosted"`
+		TaskListed       bool   `json:"taskListed"`
+		FormOpen         bool   `json:"formOpen"`
+	}
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url),
+		chromedp.WaitVisible("#task-list", chromedp.ByQuery),
+		chromedp.Evaluate(script, &out,
+			func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if out.Step != "done" {
+		t.Fatalf("flow stopped at step %q: %+v", out.Step, out)
+	}
+	if out.PlainEnterPosted {
+		t.Error("plain Enter submitted the comment, want a newline")
+	}
+	if !out.CommentPosted {
+		t.Error("ctrl-enter did not post the comment")
+	}
+	if !out.TaskListed {
+		t.Error("ctrl-enter did not create the task")
+	}
+	if out.FormOpen {
+		t.Error("ctrl-enter left the new-task form open")
 	}
 }
