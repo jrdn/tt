@@ -42,6 +42,7 @@ IDs are short; a unique prefix works.
 2. `tt claim <id>`.
 3. Comment as you go, with `--author hermes`: what you did, what is left, any branch or commit, and what a fresh agent would need to know. If you stop, the last comment should let someone else resume.
 4. When the work is finished, set `--status=in_review`. Do **not** mark a task `done` or `cancelled` unless jrdn asks: review is theirs.
+5. If you cannot finish because you need an answer, a decision or access from jrdn, comment the question and set `--status=blocked`. `open` means "not triaged yet"; `blocked` means "started, waiting on a person", so it leaves the work queue without losing the fact that work has begun.
 
 ## Judgment
 

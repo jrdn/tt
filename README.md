@@ -77,8 +77,12 @@ TASKS_DB=/path/to/tasks.db tt ls
 
 | Value | Meaning |
 |---|---|
-| `open` | Not started |
+| `backlog` | Captured, deliberately not scheduled yet |
+| `open` | Not started; needs triage before an agent can pick it up |
+| `ready` | Triaged and unblocked; an agent may pick it up |
 | `in_progress` | Actively being worked |
+| `blocked` | Started but waiting on a person: a decision, an answer, access |
+| `in_review` | Work finished and awaiting review |
 | `done` | Completed |
 | `cancelled` | Explicitly abandoned |
 
