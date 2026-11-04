@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
@@ -29,6 +30,12 @@ func searchReference(db *sqlx.DB, query string) ([]Task, error) {
 		matched := false
 		score := 0
 
+		if ok, s := idScore(query, t.ID); ok {
+			if !matched || s > score {
+				score = s
+			}
+			matched = true
+		}
 		if ok, s := fuzzyScore(query, t.Title); ok {
 			s += 100
 			if !matched || s > score {
@@ -156,6 +163,42 @@ func TestSearch_MatchesReference(t *testing.T) {
 		}
 		if !slices.Equal(ids(got), ids(want)) {
 			t.Errorf("Search(%q) = %d results %v\nreference   %d results %v", q, len(got), ids(got), len(want), ids(want))
+		}
+	}
+}
+
+func TestSearch_ByID(t *testing.T) {
+	d := openTestDB(t)
+	want, err := Create(d, "fix the project switcher", CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A task whose title contains the other one's ID must not outrank it.
+	other, err := Create(d, "mention "+want.ID+" in a title", CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, q := range []string{want.ID, strings.ToUpper(want.ID), want.ID[:3]} {
+		got, err := Search(d, q)
+		if err != nil {
+			t.Fatalf("Search(%q): %v", q, err)
+		}
+		if len(got) == 0 || got[0].ID != want.ID {
+			t.Errorf("Search(%q) first result = %v, want %s", q, ids(got), want.ID)
+		}
+	}
+
+	if got, err := Search(d, other.ID); err != nil {
+		t.Fatalf("Search(%s): %v", other.ID, err)
+	} else if len(got) == 0 || got[0].ID != other.ID {
+		t.Errorf("Search(%s) first result = %v, want it first", other.ID, ids(got))
+	}
+
+	// Metacharacters in an ID query must not widen the LIKE pattern.
+	for _, q := range []string{"%", "_", `\`} {
+		if _, err := Search(d, q); err != nil {
+			t.Errorf("Search(%q): %v", q, err)
 		}
 	}
 }

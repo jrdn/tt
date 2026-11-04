@@ -432,6 +432,42 @@ func fuzzyScore(pattern, text string) (bool, int) {
 	return false, 0
 }
 
+// idScore scores query against a task ID. IDs are short and random, so
+// subsequence matching (as the text fields use) would match almost every
+// task: only an exact, prefix or substring hit counts. An exact ID outranks
+// any text match, so searching a full ID puts that task first.
+func idScore(query, id string) (bool, int) {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q == "" {
+		return false, 0
+	}
+	id = strings.ToLower(id)
+	switch {
+	case id == q:
+		return true, 400
+	case strings.HasPrefix(id, q):
+		return true, 300
+	case strings.Contains(id, q):
+		return true, 200
+	}
+	return false, 0
+}
+
+// substringPattern wraps query in % and escapes LIKE metacharacters with \,
+// so it matches the texts idScore accepts. Pairs with LIKE ... ESCAPE '\'.
+func substringPattern(query string) string {
+	var b strings.Builder
+	b.WriteByte('%')
+	for _, r := range strings.ToLower(query) {
+		if r == '%' || r == '_' || r == '\\' {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	b.WriteByte('%')
+	return b.String()
+}
+
 // subsequencePattern turns a query into a LIKE pattern that matches exactly
 // the texts fuzzyScore accepts: the query's characters in order, anything in
 // between ("brsk" -> "%b%r%s%k%"). LIKE metacharacters are escaped with \.
@@ -448,7 +484,7 @@ func subsequencePattern(query string) string {
 	return b.String()
 }
 
-// Search ranks tasks whose title, description, assignee, or any comment
+// Search ranks tasks whose ID, title, description, assignee, or any comment
 // matches query (substring or fuzzy subsequence). The database narrows the
 // candidates with a LIKE pattern; only those are loaded and scored. On
 // SQLite this needs the tt_lower function registered by the db package.
@@ -459,12 +495,14 @@ func Search(db *sqlx.DB, query string) ([]Task, error) {
 	}
 	like := func(col string) string { return lower + "(" + col + ") LIKE ? ESCAPE '\\'" }
 	q := `SELECT * FROM tasks WHERE ` + like("title") + ` OR ` + like("description") + ` OR ` + like("assignee") +
+		` OR ` + like("id") +
 		// Uncorrelated, so comments are scanned once rather than per task.
 		` OR id IN (SELECT task_id FROM comments WHERE ` + like("body") + ` OR ` + like("author") + `)
 		ORDER BY ` + insertOrder(db)
 	pat := subsequencePattern(query)
+	sub := substringPattern(strings.TrimSpace(query))
 	var all []Task
-	if err := db.Select(&all, db.Rebind(q), pat, pat, pat, pat, pat); err != nil {
+	if err := db.Select(&all, db.Rebind(q), pat, pat, pat, sub, pat, pat); err != nil {
 		return nil, err
 	}
 	commentsByTask, err := commentsFor(db, all)
@@ -482,6 +520,12 @@ func Search(db *sqlx.DB, query string) ([]Task, error) {
 		matched := false
 		score := 0
 
+		if ok, s := idScore(query, t.ID); ok {
+			if !matched || s > score {
+				score = s
+			}
+			matched = true
+		}
 		if ok, s := fuzzyScore(query, t.Title); ok {
 			s += 100
 			if !matched || s > score {

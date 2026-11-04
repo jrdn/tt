@@ -11,7 +11,7 @@ func newSearchCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "search <query>",
 		Aliases: []string{"find"},
-		Short:   "Fuzzy-search tasks by title, description, or comment",
+		Short:   "Fuzzy-search tasks by id, title, description, assignee, or comment",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			tasks, err := store.Search(cmd.Context(), args[0])
