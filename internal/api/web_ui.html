@@ -178,7 +178,10 @@ header h1 .version:empty { display: none; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dash-activity { margin-top: 24px; }
+.dash-main { display: flex; gap: 20px; align-items: flex-start; margin-bottom: 24px; }
+.dash-main .dash-activity { flex: 0 0 340px; min-width: 0; }
+.dash-main #dash-top { flex: 1; min-width: 0; }
+@media (max-width: 800px) { .dash-main { flex-direction: column; } .dash-main .dash-activity { flex-basis: auto; width: 100%; } }
 .dash-activity h2 { font-size: 14px; color: var(--text); margin-bottom: 10px; }
 .dash-activity-rows {
   background: var(--surface);
@@ -1682,8 +1685,9 @@ function renderDashboard(results, activity = []) {
     stat(overdue, 'overdue');
   const el = document.getElementById('dashboard');
   if (!document.getElementById('dash-top')) {
-    el.innerHTML = '<div id="dash-top"></div>' +
+    el.innerHTML = '<div class="dash-main">' +
       '<div class="dash-activity"><h2>Activity</h2><div class="dash-activity-rows" id="dash-activity-rows"></div></div>' +
+      '<div id="dash-top"></div></div>' +
       '<div class="dash-issues" id="dash-issues"></div>';
     buildIssueShell();
   }
