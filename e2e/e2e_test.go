@@ -796,3 +796,161 @@ func TestDefaultServer(t *testing.T) {
 		t.Errorf("whoami after logout (exit %d): %s", code, o)
 	}
 }
+
+// localFiles lists any SQLite database files under dir.
+func localFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	var found []string
+	filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() && strings.Contains(filepath.Base(p), ".db") {
+			found = append(found, p)
+		}
+		return nil
+	})
+	return found
+}
+
+// TestModeIsolation checks that each mode stays in its own store: in a
+// directory that uses a server, no command may create or open a local
+// database; in a directory that doesn't, no command may reach the server.
+func TestModeIsolation(t *testing.T) {
+	s := startServer(t)
+
+	t.Run("server mode never opens a local database", func(t *testing.T) {
+		e := remoteEnv(t, s, "iso")
+		e.must("project", "create", "iso")
+		other := "iso2"
+		e.must("project", "create", other)
+		stray := filepath.Join(e.vars["HOME"], "stray.db")
+		e = e.with("TASKS_DB", stray)
+
+		var tk struct{ ID string }
+		json.Unmarshal([]byte(e.must("add", "Served task", "--created-by", "jrdn", "--json")), &tk)
+		o2 := e.with("TT_PROJECT", other)
+		var tk2 struct{ ID string }
+		json.Unmarshal([]byte(o2.must("add", "Other project task", "--created-by", "jrdn", "--json")), &tk2)
+
+		for _, args := range [][]string{
+			{"ls"}, {"ls", "--all"}, {"show", tk.ID}, {"search", "served"}, {"next", "--as", "nobody"},
+			{"update", tk.ID, "--priority", "1"}, {"comment", tk.ID, "hi", "--author", "jrdn"},
+			{"link", tk.ID, "github", "1"}, {"graph"}, {"prime"}, {"export"}, {"whoami"},
+			{"project", "ls"}, {"global-overview"}, {"global-overview", "--json"},
+			{"show", other + "." + tk2.ID}, {"show", other + ":" + tk2.ID},
+			{"relate", tk.ID, "related", other + "." + tk2.ID},
+			{"done", tk.ID}, {"reopen", tk.ID},
+		} {
+			e.run(args...)
+		}
+		if found := localFiles(t, e.vars["HOME"]); len(found) != 0 {
+			t.Errorf("server mode created local databases: %v", found)
+		}
+
+		// A qualified ID reaches the other project, and global-overview sees both.
+		if out := e.must("show", other+"."+tk2.ID); !strings.Contains(out, "Other project task") {
+			t.Errorf("qualified show missed the other project's task:\n%s", out)
+		}
+		ov := e.must("global-overview", "--all")
+		if !strings.Contains(ov, "Served task") || !strings.Contains(ov, "Other project task") ||
+			!strings.Contains(ov, "iso.") || !strings.Contains(ov, other+".") {
+			t.Errorf("global-overview should list both projects:\n%s", ov)
+		}
+		if out := e.must("global-overview", "--all", "--project", other); strings.Contains(out, "Served task") ||
+			!strings.Contains(out, "Other project task") {
+			t.Errorf("global-overview --project %s:\n%s", other, out)
+		}
+		// Tasks created via the CLI landed on the server, not in a file.
+		if out := e.with("TT_PROJECT", "iso").must("ls", "--all"); !strings.Contains(out, "Served task") {
+			t.Errorf("server doesn't hold the task:\n%s", out)
+		}
+
+		// Local-only commands refuse rather than quietly using a local database.
+		for _, args := range [][]string{{"sync", "push"}, {"sync", "pull"}, {"sync", "configure", "--type", "scp"}} {
+			if o, code := e.run(args...); code == 0 || !strings.Contains(o, "works on local databases") {
+				t.Errorf("tt %s in server mode (exit %d): %s", strings.Join(args, " "), code, o)
+			}
+		}
+		if found := localFiles(t, e.vars["HOME"]); len(found) != 0 {
+			t.Errorf("local-only commands created local databases: %v", found)
+		}
+	})
+
+	t.Run("environment selects the server project", func(t *testing.T) {
+		e := newEnv(t)
+		e.must("login", "--server", s.url, "--key", s.key)
+		e.must("project", "create", "envproj")
+		e = e.with("TT_SERVER", s.url, "TT_PROJECT", "envproj", "TASKS_DB", filepath.Join(e.vars["HOME"], "stray.db"))
+		e.must("add", "From env", "--created-by", "jrdn")
+		if out := e.must("ls"); !strings.Contains(out, "From env") {
+			t.Errorf("ls with TT_SERVER/TT_PROJECT:\n%s", out)
+		}
+		if found := localFiles(t, e.vars["HOME"]); len(found) != 0 {
+			t.Errorf("environment mode created local databases: %v", found)
+		}
+	})
+
+	t.Run("subdirectories and worktrees follow the checked-in project", func(t *testing.T) {
+		e := remoteEnv(t, s, "iso")
+		e = e.with("TASKS_DB", filepath.Join(e.vars["HOME"], "stray.db"))
+		var tk struct{ ID string }
+		json.Unmarshal([]byte(e.must("add", "Nested", "--created-by", "jrdn", "--json")), &tk)
+		sub := filepath.Join(e.dir, "a", "b")
+		os.MkdirAll(sub, 0755)
+		nested := &env{t: t, dir: sub, vars: e.vars}
+		if out := nested.must("ls"); !strings.Contains(out, "Nested") {
+			t.Errorf("ls from a subdirectory didn't use the server:\n%s", out)
+		}
+		// worktree resolves the task on the server, then branches the repo.
+		for _, c := range [][]string{
+			{"config", "user.email", "t@example.com"}, {"config", "user.name", "t"},
+			{"commit", "--allow-empty", "-q", "-m", "init"},
+		} {
+			if out, err := exec.Command("git", append([]string{"-C", e.dir}, c...)...).CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v\n%s", c, err, out)
+			}
+		}
+		root := filepath.Join(e.vars["HOME"], "worktrees")
+		wt := e.with("GIT_WORKTREE_ROOT", root)
+		out := wt.must("worktree", tk.ID)
+		if !strings.Contains(out, "tt/"+tk.ID) {
+			t.Errorf("worktree output:\n%s", out)
+		}
+		if _, err := os.Stat(filepath.Join(root, filepath.Base(e.dir)+"-"+tk.ID)); err != nil {
+			t.Errorf("worktree directory missing: %v", err)
+		}
+		if o, code := wt.run("worktree", "zzzzzzz"); code == 0 {
+			t.Errorf("worktree of a missing task succeeded:\n%s", o)
+		}
+		if found := localFiles(t, e.vars["HOME"]); len(found) != 0 {
+			t.Errorf("created local databases: %v", found)
+		}
+	})
+
+	t.Run("local mode never reaches the server", func(t *testing.T) {
+		e := newEnv(t)
+		gitInit(t, e.dir)
+		// Logged in to a server, but this directory is not a server project.
+		e.must("login", "--server", s.url, "--key", s.key)
+		e.must("project", "create", "untouched")
+		localDB := filepath.Join(e.vars["HOME"], "local.db")
+		e = e.with("TASKS_DB", localDB)
+		e.must("add", "Only local", "--created-by", "jrdn")
+		if out := e.must("ls"); !strings.Contains(out, "Only local") {
+			t.Errorf("local ls:\n%s", out)
+		}
+		if out := e.must("global-overview", "--all"); strings.Contains(out, "untouched.") {
+			t.Errorf("local global-overview listed server projects:\n%s", out)
+		}
+		if _, err := os.Stat(localDB); err != nil {
+			t.Errorf("local database not created: %v", err)
+		}
+		// --project names a server project, which means nothing locally.
+		if o, code := e.run("global-overview", "--project", "untouched"); code == 0 || !strings.Contains(o, "local database") {
+			t.Errorf("global-overview --project in local mode (exit %d): %s", code, o)
+		}
+		// Nothing was created on the server.
+		srv := e.with("TT_SERVER", s.url, "TT_PROJECT", "untouched")
+		if out := srv.must("ls", "--all"); strings.Contains(out, "Only local") {
+			t.Errorf("local task leaked to the server:\n%s", out)
+		}
+	})
+}
