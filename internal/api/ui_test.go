@@ -1018,3 +1018,22 @@ func TestCtrlEnterSubmitsTheTypedForm(t *testing.T) {
 		t.Error("ctrl-enter left the new-task form open")
 	}
 }
+
+// A linked task that can't be loaded must fall back to the list instead of
+// leaving an empty detail pane.
+func TestUnknownTaskLinkFallsBackToList(t *testing.T) {
+	ctx, url := newBrowser(t)
+	var search string
+	var active bool
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url+"/?task=nosuchid"),
+		chromedp.Poll(`!location.search.includes('task=')`, nil),
+		chromedp.Evaluate(`location.search`, &search),
+		chromedp.Evaluate(`document.querySelector('.layout').classList.contains('detail-active')`, &active),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if active {
+		t.Errorf("detail pane still active after a failed load (search %q)", search)
+	}
+}
