@@ -1835,8 +1835,10 @@ async function loadTask(id) {
     if (!res.ok) throw new Error(await res.text());
     renderTaskDetail(await res.json());
   } catch (_) {
-    document.getElementById('main').innerHTML =
-      '<div class="empty-state" style="color:#ef4444">Failed to load task</div>';
+    // A task that can't be loaded (deleted, wrong project, expired session)
+    // must not strand the phone on an empty detail pane: fall back to the list.
+    if (selectedId !== id) return; // the user already moved on
+    goBackToList();
   }
 }
 
@@ -2570,7 +2572,12 @@ function setupSplitter() {
 
 // ── Boot ───────────────────────────────────────────────────
 setupSplitter();
-setupProject().then(ok => {
+setupProject().catch(() => {
+  // Project lookup failed (offline, expired session): reload rather than
+  // leaving a blank page.
+  document.body.innerHTML = '<p style="padding:2em">Failed to load. <a href="">Retry</a></p>';
+  return false;
+}).then(ok => {
   if (!ok) return;
   fetchMyHandle();
   renderFilters();
