@@ -1078,3 +1078,24 @@ func TestUnknownTaskLinkFallsBackToList(t *testing.T) {
 		t.Errorf("detail pane still active after a failed load (search %q)", search)
 	}
 }
+
+// TestDashboardCardsStaySmallBesideActivity checks that with the activity
+// panel taking the left column, the project cards still tile in several
+// columns instead of stretching to one full-width card per line.
+func TestDashboardCardsStaySmallBesideActivity(t *testing.T) {
+	ctx, url := newBrowser(t)
+	var cols int
+	if err := chromedp.Run(ctx,
+		chromedp.EmulateViewport(1000, 800),
+		chromedp.Navigate(url),
+		chromedp.WaitVisible("#dash-btn"),
+		chromedp.Click("#dash-btn", chromedp.ByID),
+		chromedp.Poll(`document.querySelector('.dash-grid') !== null`, nil),
+		chromedp.Evaluate(`getComputedStyle(document.querySelector('.dash-grid')).gridTemplateColumns.split(' ').length`, &cols),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if cols < 2 {
+		t.Errorf("dashboard grid has %d column(s) at 1000px wide, want at least 2", cols)
+	}
+}
