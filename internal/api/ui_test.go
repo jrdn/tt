@@ -141,6 +141,47 @@ func TestThemeToggleOverridesSystem(t *testing.T) {
 	}
 }
 
+func TestDashboardStatusBarExcludesTerminalStatuses(t *testing.T) {
+	ctx, url := newBrowser(t)
+	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitVisible("#dash-btn")); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []string{"in_progress", "done", "cancelled"} {
+		var created bool
+		if err := chromedp.Run(ctx, chromedp.Evaluate(
+			`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title:'status '+`+strconv.Quote(status)+`, status:`+strconv.Quote(status)+`})}).then(r => r.ok)`,
+			&created,
+			func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) },
+		)); err != nil || !created {
+			t.Fatalf("create %s task: %v %v", status, created, err)
+		}
+	}
+	var result struct {
+		BarTitles []string `json:"barTitles"`
+		Chips     string   `json:"chips"`
+	}
+	if err := chromedp.Run(ctx,
+		chromedp.Click("#dash-btn", chromedp.ByID),
+		chromedp.Poll(`document.querySelector('.dash-card .dash-bar [title="In Progress: 1"]') !== null`, nil),
+		chromedp.Evaluate(`(() => ({
+		  barTitles: Array.from(document.querySelectorAll('.dash-card .dash-bar [title]')).map(el => el.title),
+		  chips: document.querySelector('.dash-card .dash-counts').innerText
+		}))()`, &result),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.BarTitles) != 1 || result.BarTitles[0] != "In Progress: 1" {
+		t.Errorf("bar titles = %v, want only In Progress: 1", result.BarTitles)
+	}
+	for _, want := range []string{"In Progress 1", "Done 1", "Cancelled 1"} {
+		if !strings.Contains(result.Chips, want) {
+			t.Errorf("status chips %q missing %q", result.Chips, want)
+		}
+	}
+}
+
+// TestDashboardShowsStatusCounts verifies the dashboard still shows counts
+// and labels for active status bars and status chips.
 func TestDashboardShowsStatusCounts(t *testing.T) {
 	ctx, url := newBrowser(t)
 	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitVisible("#dash-btn")); err != nil {
