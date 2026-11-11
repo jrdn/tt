@@ -1666,7 +1666,10 @@ function renderDashboard(results, activity = []) {
     overdue += od;
     const open = tasks.length - (counts.done || 0) - (counts.cancelled || 0);
     active += open;
-    const bar = ALL_STATUSES.filter(s => counts[s]).map(s =>
+    // Keep the compact status bar focused on active work. Lifetime totals for
+    // done/cancelled eventually drown out the statuses that need attention.
+    const activeStatuses = ALL_STATUSES.filter(s => s !== 'done' && s !== 'cancelled');
+    const bar = activeStatuses.filter(s => counts[s]).map(s =>
       `<div style="flex:${counts[s]};background:${STATUS_COLORS[s]}" title="${esc(STATUS_LABELS[s])}: ${counts[s]}"></div>`).join('');
     const chips = ALL_STATUSES.filter(s => counts[s]).map(s =>
       `<span class="badge" style="background:${STATUS_COLORS[s]}">${esc(STATUS_LABELS[s])} ${counts[s]}</span>`).join('');
