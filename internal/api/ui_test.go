@@ -1099,3 +1099,66 @@ func TestDashboardCardsStaySmallBesideActivity(t *testing.T) {
 		t.Errorf("dashboard grid has %d column(s) at 1000px wide, want at least 2", cols)
 	}
 }
+
+// TestDashboardActivityRowOpensItsTask checks that clicking an entry in the
+// dashboard's activity panel opens that task's detail.
+func TestDashboardActivityRowOpensItsTask(t *testing.T) {
+	check := func(t *testing.T, ctx context.Context, url, want string) {
+		t.Helper()
+		if err := chromedp.Run(ctx,
+			chromedp.Navigate(url),
+			chromedp.Poll(`document.getElementById('dash-btn') !== null`, nil),
+			chromedp.Sleep(300*time.Millisecond),
+			chromedp.Click("#dash-btn", chromedp.ByID),
+			chromedp.Poll(`document.querySelectorAll('#dash-activity-rows .activity-row').length >= 1`, nil),
+		); err != nil {
+			t.Fatal(err)
+		}
+		var href string
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`[...document.querySelectorAll('#dash-activity-rows .activity-row')].find(r => r.innerText.includes('`+want+`')).getAttribute('href')`, &href)); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(href, "task=") {
+			t.Errorf("activity row href = %q, want a link to the task", href)
+		}
+		var title string
+		if err := chromedp.Run(ctx,
+			chromedp.Evaluate(`[...document.querySelectorAll('#dash-activity-rows .activity-row')].find(r => r.innerText.includes('`+want+`')).click()`, nil),
+			chromedp.Poll(`document.getElementById('detail-title') !== null`, nil),
+			chromedp.Evaluate(`document.getElementById('detail-title').innerText`, &title),
+		); err != nil {
+			t.Fatal(err)
+		}
+		if title != want {
+			t.Errorf("detail title = %q, want %q", title, want)
+		}
+		var shown bool
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`document.body.classList.contains('show-dashboard')`, &shown)); err != nil {
+			t.Fatal(err)
+		}
+		if shown {
+			t.Error("dashboard still covers the task detail")
+		}
+	}
+	t.Run("local", func(t *testing.T) {
+		ctx, url := newBrowser(t)
+		if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitVisible("#dash-btn")); err != nil {
+			t.Fatal(err)
+		}
+		var ok bool
+		if err := chromedp.Run(ctx, chromedp.Evaluate(
+			`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title:'linked task'})}).then(r => r.ok)`,
+			&ok, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) })); err != nil || !ok {
+			t.Fatalf("create task: %v %v", ok, err)
+		}
+		check(t, ctx, url, "linked task")
+	})
+	t.Run("server project", func(t *testing.T) {
+		ctx, url := newServerModeBrowser(t)
+		check(t, ctx, url+"/?project=alpha", "alpha task")
+	})
+	t.Run("server all projects", func(t *testing.T) {
+		ctx, url := newServerModeBrowser(t)
+		check(t, ctx, url+"/?project=all", "beta task")
+	})
+}
