@@ -117,6 +117,7 @@ header h1 .version:empty { display: none; }
   border-bottom: 1px solid var(--bg-muted);
   transition: background 0.1s;
 }
+a.recent-row { color: inherit; text-decoration: none; }
 .recent-row:last-child { border-bottom: none; }
 .recent-row:hover { background: var(--hover); }
 .recent-row-main { flex: 1; min-width: 0; }
@@ -1318,8 +1319,11 @@ function activityRow(a) {
     (a.actor ? `<span class="recent-row-assignee">@${esc(a.actor)}</span>` : '');
   const line = activityLine(a);
   const label = ACTIVITY_LABELS[a.kind] || a.kind;
+  // A real link, so it can be opened in a new tab or copied; a plain click is
+  // handled in place.
+  const href = taskLinkURL(a.task_id, proj);
   return `
-    <div class="recent-row activity-row" onclick="openActivity('${esc(a.task_id)}', '${esc(a._project || '')}')">
+    <a class="recent-row activity-row" href="${esc(href.pathname + href.search)}" onclick="return openActivity(event, '${esc(a.task_id)}', '${esc(a._project || '')}')">
       <span class="activity-kind kind-${esc(a.kind)}">${esc(label)}</span>
       <span class="recent-row-main">
         <span class="recent-row-title" title="${esc(a.task_title)}">${esc(a.task_title)}</span>
@@ -1327,12 +1331,14 @@ function activityRow(a) {
         ${line ? `<span class="activity-line" title="${esc(line)}">${esc(line)}</span>` : ''}
       </span>
       <span class="recent-row-time">${timeAgo(a.at)}</span>
-    </div>`;
+    </a>`;
 }
 
-function openActivity(id, project) {
+function openActivity(e, id, project) {
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button) return true; // let the browser open the link
   closeRecent();
   openIssue(id, project);
+  return false;
 }
 
 // ── Live refresh ───────────────────────────────────────────
@@ -1619,6 +1625,7 @@ async function loadDashboard() {
 const DASH_ACTIVITY_PAGE = 5;
 let dashActivity = [];
 let dashActivityPage = 0;
+let dashActivityHTML = '';
 
 function dashActivityPages() {
   return Math.max(1, Math.ceil(dashActivity.length / DASH_ACTIVITY_PAGE));
@@ -1640,7 +1647,9 @@ function renderDashActivity() {
       <button onclick="dashActivityOlder(1)"${dashActivityPage >= dashActivityPages() - 1 ? ' disabled' : ''}>Older</button>
     </div>`;
   }
-  rows.innerHTML = html;
+  // The live refresh re-renders this panel on every change; replacing identical
+  // rows would swallow a click that is already under way.
+  if (html !== dashActivityHTML) rows.innerHTML = dashActivityHTML = html;
 }
 
 function dashActivityOlder(step) {
@@ -1693,6 +1702,7 @@ function renderDashboard(results, activity = []) {
       '<div id="dash-top"></div></div>' +
       '<div class="dash-issues" id="dash-issues"></div>';
     buildIssueShell();
+    dashActivityHTML = '';
   }
   document.getElementById('dash-top').innerHTML =
     `<div class="dash-totals">${totals}</div><div class="dash-grid">${cards.join('')}</div>`;
