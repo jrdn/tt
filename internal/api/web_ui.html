@@ -1,4 +1,5 @@
-<!DOCTYPE html>
+  const hit = (q === 'all projects' || q === ALL_PROJECTS) && PROJECTS.length > 1 ? ALL_PROJECTS
+    : (PROJECTS.find(p => p.slug.toLowerCase() === q || p.name.toLowerCase() === q) || {}).slug;<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -950,7 +951,10 @@ main {
 <header>
   <button class="back-btn" id="back-btn" onclick="goBackToList()" style="display:none">← Back</button>
   <h1>tt<span class="version" id="tt-version" title="tt build version">{{TT_VERSION}}</span></h1>
-  <select id="project-select" onchange="switchProject(this.value)" style="display:none"></select>
+  <input id="project-select" list="project-list" placeholder="Switch project…" autocomplete="off" spellcheck="false"
+    aria-label="Switch project" style="display:none;width:150px"
+    onfocus="this.select()" onchange="pickProject(this)" onkeydown="if(event.key==='Escape'){this.value=this.dataset.current;this.blur()}">
+  <datalist id="project-list"></datalist>
   <button class="btn btn-ghost" onclick="openNewTask()" style="font-size:12px;padding:5px 12px">+ New</button>
   <button class="recent-btn" id="dash-btn" onclick="toggleDashboard()">Dashboard</button>
   <button class="recent-btn" id="recent-btn" onclick="toggleRecent()">Recent</button>
@@ -1167,11 +1171,24 @@ async function setupProject() {
   CURRENT_PROJECT = ALL ? null : choice;
   if (!ALL) API = projBase(choice);
   const sel = document.getElementById('project-select');
-  sel.innerHTML = (PROJECTS.length > 1 ? `<option value="${ALL_PROJECTS}"${ALL ? ' selected' : ''}>All projects</option>` : '') +
-    PROJECTS.map(p =>
-      `<option value="${esc(p.slug)}"${p.slug === choice ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
+  const current = ALL ? ALL_PROJECTS : choice;
+  document.getElementById('project-list').innerHTML =
+    (PROJECTS.length > 1 ? `<option value="${ALL_PROJECTS}">All projects</option>` : '') +
+    PROJECTS.map(p => `<option value="${esc(p.slug)}">${esc(p.name)}</option>`).join('');
+  sel.dataset.current = current;
+  sel.value = current;
   sel.style.display = PROJECTS.length > 1 ? '' : 'none';
   return true;
+}
+
+// pickProject resolves what was typed in the switcher (a slug, a project name
+// or "all projects") and switches; anything else puts the current project back.
+function pickProject(input) {
+  const q = input.value.trim().toLowerCase();
+  const hit = q === 'all projects' && PROJECTS.length > 1 ? ALL_PROJECTS
+    : (PROJECTS.find(p => p.slug.toLowerCase() === q || p.name.toLowerCase() === q) || {}).slug || (q === ALL_PROJECTS && PROJECTS.length > 1 ? ALL_PROJECTS : null);
+  if (!hit || hit === input.dataset.current) { input.value = input.dataset.current; return; }
+  switchProject(hit);
 }
 
 function switchProject(slug) {

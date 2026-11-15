@@ -398,7 +398,7 @@ func newServerModeBrowser(t *testing.T) (context.Context, string) {
 func TestProjectSwitcherIsStickyAndAllShowsProjects(t *testing.T) {
 	ctx, url := newServerModeBrowser(t)
 	var sel, list string
-	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.Poll(`document.querySelector('#project-select option') !== null`, nil),
+	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.Poll(`document.querySelector('#project-list option') !== null`, nil),
 		chromedp.Evaluate(`switchProject('beta')`, nil), // reloads the page
 		chromedp.Sleep(500*time.Millisecond),
 		chromedp.Poll(`document.querySelector('.task-item') !== null`, nil),
@@ -1161,4 +1161,37 @@ func TestDashboardActivityRowOpensItsTask(t *testing.T) {
 		ctx, url := newServerModeBrowser(t)
 		check(t, ctx, url+"/?project=all", "beta task")
 	})
+}
+
+// TestProjectSwitcherTypesToSwitch checks the header switcher is a searchable
+// input: it lists every project, and typing a project's name or slug switches
+// to it, while an unknown entry leaves the current project in place.
+func TestProjectSwitcherTypesToSwitch(t *testing.T) {
+	ctx, url := newServerModeBrowser(t)
+	var options, value string
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url+"/?project=alpha"),
+		chromedp.Poll(`document.querySelectorAll('#project-list option').length > 0`, nil),
+		chromedp.Evaluate(`[...document.querySelectorAll('#project-list option')].map(o => o.value).join(',')`, &options),
+		chromedp.Evaluate(`(() => { const i = document.getElementById('project-select'); i.value = 'nope'; i.dispatchEvent(new Event('change')); return i.value })()`, &value),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if options != "all,alpha,beta" {
+		t.Errorf("options = %q, want all,alpha,beta", options)
+	}
+	if value != "alpha" {
+		t.Errorf("after unknown entry value = %q, want alpha", value)
+	}
+	if err := chromedp.Run(ctx,
+		chromedp.Evaluate(`(() => { const i = document.getElementById('project-select'); i.value = 'Beta'; setTimeout(() => i.dispatchEvent(new Event('change')), 0) })()`, nil),
+		chromedp.Sleep(700*time.Millisecond), // the page reloads for the new project
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := chromedp.Run(ctx,
+		chromedp.Poll(`location.search.includes('project=beta') && document.getElementById('project-select').value === 'beta'`, nil),
+	); err != nil {
+		t.Fatal(err)
+	}
 }
