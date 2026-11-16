@@ -65,7 +65,7 @@ TASKS_DB=/path/to/tasks.db tt ls
 | `status` | enum | yes | See below |
 | `parent_id` | string | no | ID of parent task |
 | `description` | text | no | Longer body / notes |
-| `priority` | int | no | 0 (critical) – 4 (backlog), default 2 |
+| `priority` | int | no | 0 (critical) – 3 (low), default 2 |
 | `created_by` | string | no | Free-form handle of creator (human or agent) |
 | `assignee` | string | no | Free-form handle: `jrdn`, `claude/opus4.7`, `lmstudio/qwen3-coder` |
 | `due_date` | date | no | YYYY-MM-DD |
