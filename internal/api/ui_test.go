@@ -1210,3 +1210,41 @@ func TestProjectSwitcherTypesToSwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestCommandBar drives the palette end to end: ":" opens it, a command with a
+// second step changes the open task's status, and "Switch project…" navigates.
+func TestCommandBar(t *testing.T) {
+	ctx, url := newServerModeBrowser(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(url+"/?project=alpha"),
+		chromedp.Poll(`document.querySelector('.task-item') !== null`, nil),
+		chromedp.Click(".task-item", chromedp.ByQuery),
+		chromedp.Poll(`document.getElementById('status-sel') !== null`, nil),
+		chromedp.Evaluate(`document.activeElement && document.activeElement.blur()`, nil),
+		chromedp.Evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', {key: ':', shiftKey: true, bubbles: true}))`, nil),
+		chromedp.Poll(`document.getElementById('cmd-overlay').classList.contains('open')`, nil),
+		chromedp.SendKeys("#cmd-input", "status"+kb.Enter, chromedp.ByID),
+		chromedp.SendKeys("#cmd-input", "blocked"+kb.Enter, chromedp.ByID),
+		chromedp.Poll(`document.getElementById('status-sel').value === 'blocked'`, nil),
+	); err != nil {
+		t.Fatalf("change status: %v", err)
+	}
+	var open bool
+	if err := chromedp.Run(ctx,
+		chromedp.Evaluate(`document.getElementById('cmd-overlay').classList.contains('open')`, &open),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if open {
+		t.Error("command bar still open after running a command")
+	}
+	if err := chromedp.Run(ctx,
+		chromedp.Evaluate(`openCommandBar()`, nil),
+		chromedp.SendKeys("#cmd-input", "switch project"+kb.Enter, chromedp.ByID),
+		chromedp.SendKeys("#cmd-input", "beta"+kb.Enter, chromedp.ByID),
+		chromedp.Sleep(700*time.Millisecond), // the page reloads for the new project
+		chromedp.Poll(`location.search.includes('project=beta')`, nil),
+	); err != nil {
+		t.Fatalf("switch project: %v", err)
+	}
+}

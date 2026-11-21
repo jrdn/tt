@@ -83,6 +83,25 @@ header h1 .version:empty { display: none; }
 .recent-btn:hover { background: rgba(255,255,255,0.14); }
 .recent-btn.active { background: rgba(203,166,247,0.2); border-color: #cba6f7; color: #cba6f7; }
 
+/* ── Command bar ── */
+.cmd-overlay { align-items: flex-start; padding-top: 14vh; }
+.cmd-modal { width: 560px; max-height: 60vh; }
+.cmd-modal input {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  padding: 14px 18px;
+  outline: none;
+}
+.cmd-list { overflow-y: auto; }
+.cmd-item { display: flex; justify-content: space-between; gap: 12px; padding: 9px 18px; font-size: 13px; color: var(--text); cursor: pointer; }
+.cmd-item small { color: var(--text-dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmd-item.active { background: var(--hover); }
+.cmd-empty { padding: 12px 18px; font-size: 12px; color: var(--text-dim); }
+
 /* ── Project switcher ── */
 .proj-switch { position: relative; }
 .proj-switch .recent-btn { min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1061,6 +1080,14 @@ main {
   </div>
 </div>
 
+<div class="modal-overlay cmd-overlay" id="cmd-overlay" onmousedown="if (event.target === this) closeCommandBar()">
+  <div class="modal cmd-modal" role="dialog" aria-label="Command bar">
+    <input id="cmd-input" autocomplete="off" spellcheck="false" aria-label="Command"
+      oninput="cmdIdx = 0; cmdRefresh()" onkeydown="onCommandKey(event)">
+    <div class="cmd-list" id="cmd-list" role="listbox"></div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="help-overlay" onclick="if (event.target === this) closeHelp()">
   <div class="modal help-modal" role="dialog" aria-label="Keyboard shortcuts" onclick="event.stopPropagation()">
     <div class="modal-header">
@@ -1076,6 +1103,7 @@ main {
         <tr><td><kbd>c</kbd></td><td>Comment on the open task</td></tr>
         <tr><td><kbd>d</kbd></td><td>Toggle the dashboard</td></tr>
         <tr><td><kbd>p</kbd></td><td>Switch project</td></tr>
+        <tr><td><kbd>:</kbd> / <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd></td><td>Command bar: status, priority, assignee, relations, projects, dashboard…</td></tr>
         <tr><td><kbd>?</kbd></td><td>Show this help</td></tr>
         <tr><td><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>K</kbd></td><td>New task (not while typing in a field, where Ctrl-K kills the line)</td></tr>
         <tr><td><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd></td><td>Submit the comment or new task you are typing</td></tr>
@@ -2619,6 +2647,11 @@ document.addEventListener('keydown', e => {
   }
   // Ctrl-K is "kill line" in a text field (emacs, and native on macOS), so it
   // only opens the new-ticket form when no field is being edited.
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'p') {
+    e.preventDefault();
+    openCommandBar();
+    return;
+  }
   if ((e.metaKey || e.ctrlKey) && e.key === 'k' && !isEditing(e.target)) {
     e.preventDefault();
     openNewTask();
@@ -2638,11 +2671,182 @@ document.addEventListener('keydown', e => {
     case 'c': handled = focusById('comment-body'); break;
     case 'd': toggleDashboard(); break;
     case 'p': handled = openProjectMenu(); break;
+    case ':': handled = openCommandBar(); break;
     case '?': openHelp(); break;
     default: handled = false;
   }
   if (handled) e.preventDefault();
 });
+
+// ── Command bar ────────────────────────────────────────────
+// A palette of actions. Each step has a prompt and either a fixed list of items
+// (filtered by what is typed) or a search function that builds them from the
+// query. An item's run() returns the next step to drill into, or nothing to
+// run and close. Esc steps back, then closes.
+let cmdStack = [];
+let cmdIdx = 0;
+let cmdItems = [];
+let cmdToken = 0;
+
+function openTaskRef() {
+  const t = !dashOpen && selectedId && currentTaskData && currentTaskData.task;
+  return t && t.id === selectedId ? t : null;
+}
+
+async function patchTask(id, body) {
+  const res = await apiFetch(API + '/tasks/' + encodeURIComponent(id), {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert('Failed: ' + (err.error || res.status));
+    return;
+  }
+  refreshList();
+  loadTask(id);
+}
+
+async function relateTask(id, type, targetId) {
+  const res = await apiFetch(API + '/tasks/' + encodeURIComponent(id) + '/relations', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({type, target_id: targetId}),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert('Failed: ' + (err.error || 'unknown error'));
+    return;
+  }
+  loadTask(id);
+}
+
+function taskSearchStep(prompt, pick) {
+  return {prompt, search: async q => {
+    if (!q) return [];
+    const tasks = await fetchTasks('/search?q=' + encodeURIComponent(q));
+    return tasks.slice(0, 12).map(t => ({
+      label: t.title, hint: qid(t) + ' · ' + (STATUS_LABELS[t.status] || t.status), run: () => pick(t),
+    }));
+  }};
+}
+
+function rootCommands() {
+  const cmds = [];
+  const t = openTaskRef();
+  if (t) {
+    cmds.push(
+      {label: 'Change status…', hint: STATUS_LABELS[t.status] || t.status, run: () => ({
+        prompt: 'Status', items: ALL_STATUSES.map(st => ({label: STATUS_LABELS[st], run: () => patchTask(t.id, {status: st})}))})},
+      {label: 'Change priority…', hint: PRI_LABELS[t.priority] || '', run: () => ({
+        prompt: 'Priority', items: PRI_LABELS.map((l, i) => ({label: l, run: () => patchTask(t.id, {priority: i})}))})},
+      {label: 'Assign…', hint: t.assignee ? '@' + t.assignee : 'unassigned', run: () => ({
+        prompt: 'Assignee handle', build: q => (q ? [{label: 'Assign to @' + q, run: () => patchTask(t.id, {assignee: q})}] : [])
+          .concat(t.assignee ? [{label: 'Unassign', run: () => patchTask(t.id, {assignee: ''})}] : [])})},
+      {label: 'Add relation…', run: () => ({
+        prompt: 'Relation', items: ['blocks', 'related', 'duplicates'].map(rt => ({label: rt, run: () =>
+          taskSearchStep('Search for the task ' + (rt === 'blocks' ? 'it blocks' : 'to relate to'),
+            target => relateTask(t.id, rt, target.id))}))})},
+    );
+  }
+  cmds.push(
+    {label: 'Go to task…', run: () => taskSearchStep('Search tasks', task => openIssue(task.id, task._project))},
+    {label: 'Switch project…', hint: projCurrent ? projLabel(projCurrent) : '', run: () => ({
+      prompt: 'Project',
+      items: (PROJECTS.length > 1 ? [{slug: ALL_PROJECTS, name: 'All projects'}] : []).concat(PROJECTS)
+        .map(p => ({label: p.name, hint: p.slug === ALL_PROJECTS || p.slug === p.name ? '' : p.slug, run: () => pickProject(p.slug)}))})},
+    {label: dashOpen ? 'Close dashboard' : 'Open dashboard', run: () => toggleDashboard()},
+    {label: 'New task', run: () => openNewTask()},
+    {label: 'Toggle theme', hint: THEME_LABELS[currentTheme()], run: () => cycleTheme()},
+    {label: 'Keyboard shortcuts', run: () => openHelp()},
+  );
+  if (!TT_SERVER || PROJECTS.length < 2) return cmds.filter(c => c.label !== 'Switch project…');
+  return cmds;
+}
+
+function openCommandBar() {
+  if (overlayOpen() && !document.getElementById('cmd-overlay').classList.contains('open')) return false;
+  closeProjectMenu();
+  cmdStack = [{prompt: 'Type a command…', items: rootCommands()}];
+  document.getElementById('cmd-overlay').classList.add('open');
+  cmdShowStep();
+  return true;
+}
+
+function closeCommandBar() {
+  cmdStack = [];
+  cmdToken++;
+  document.getElementById('cmd-overlay').classList.remove('open');
+}
+
+function cmdShowStep() {
+  const inp = document.getElementById('cmd-input');
+  inp.value = '';
+  inp.placeholder = cmdStack[cmdStack.length - 1].prompt;
+  cmdIdx = 0;
+  cmdRefresh();
+  inp.focus();
+}
+
+async function cmdRefresh() {
+  const step = cmdStack[cmdStack.length - 1];
+  if (!step) return;
+  const q = document.getElementById('cmd-input').value.trim();
+  const token = ++cmdToken;
+  let items;
+  if (step.items) {
+    const lq = q.toLowerCase();
+    items = step.items.filter(i => !lq || i.label.toLowerCase().includes(lq) || (i.hint || '').toLowerCase().includes(lq));
+  } else if (step.build) {
+    items = step.build(q);
+  } else {
+    try { items = await step.search(q); } catch (_) { items = []; }
+    if (token !== cmdToken) return; // a newer keystroke superseded this search
+  }
+  cmdItems = items;
+  cmdIdx = Math.min(cmdIdx, Math.max(items.length - 1, 0));
+  cmdRender(step.search && !q ? 'Type to search' : 'No matches');
+}
+
+function cmdRender(emptyText) {
+  document.getElementById('cmd-list').innerHTML = cmdItems.length ? cmdItems.map((i, n) =>
+    `<div class="cmd-item${n === cmdIdx ? ' active' : ''}" role="option" onmousedown="event.preventDefault()"
+      onclick="cmdRun(${n})" onmousemove="if (cmdIdx !== ${n}) { cmdIdx = ${n}; cmdRender() }">
+      <span>${esc(i.label)}</span>${i.hint ? `<small>${esc(i.hint)}</small>` : ''}</div>`).join('')
+    : `<div class="cmd-empty">${esc(emptyText || 'No matches')}</div>`;
+  const act = document.querySelector('#cmd-list .active');
+  if (act) act.scrollIntoView({ block: 'nearest' });
+}
+
+function cmdRun(n) {
+  const item = cmdItems[n];
+  if (!item) return;
+  const next = item.run();
+  if (next && (next.items || next.build || next.search)) {
+    cmdStack.push(next);
+    cmdShowStep();
+    return;
+  }
+  closeCommandBar();
+}
+
+function onCommandKey(e) {
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (cmdItems.length) cmdIdx = (cmdIdx + (e.key === 'ArrowDown' ? 1 : cmdItems.length - 1)) % cmdItems.length;
+    cmdRender();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    cmdRun(cmdIdx);
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    if (cmdStack.length > 1) { cmdStack.pop(); cmdShowStep(); } else closeCommandBar();
+  } else if (e.key === 'Backspace' && !e.target.value && cmdStack.length > 1) {
+    cmdStack.pop();
+    cmdShowStep();
+  }
+}
 
 // ── Sidebar splitter ───────────────────────────────────────
 // The sidebar width is user-draggable; the choice is remembered per browser.
