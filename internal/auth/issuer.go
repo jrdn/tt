@@ -64,7 +64,9 @@ func (i *Issuer) Sign(c *Claims, notAfter time.Time) (string, error) {
 		exp = notAfter
 	}
 	c.Issuer = i.name
-	c.IssuedAt = jwt.NewNumericDate(now)
+	// Round iat up: NewNumericDate truncates, which would put a token issued
+	// right after a revocation at or before revoked_before and reject it.
+	c.IssuedAt = jwt.NewNumericDate(now.Add(jwt.TimePrecision - 1))
 	c.ExpiresAt = jwt.NewNumericDate(exp)
 	c.ID = randomID()
 	tok := jwt.NewWithClaims(jwt.SigningMethodEdDSA, c)

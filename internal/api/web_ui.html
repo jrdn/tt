@@ -179,8 +179,8 @@ a.recent-row { color: inherit; text-decoration: none; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dash-main { display: flex; gap: 20px; align-items: flex-start; margin-bottom: 24px; }
-.dash-main .dash-activity { flex: 0 0 340px; min-width: 0; }
+.dash-main { display: flex; gap: 20px; align-items: stretch; margin-bottom: 24px; }
+.dash-main .dash-activity { flex: 0 0 440px; min-width: 0; display: flex; flex-direction: column; }
 .dash-main #dash-top { flex: 1; min-width: 0; }
 @media (max-width: 800px) { .dash-main { flex-direction: column; } .dash-main .dash-activity { flex-basis: auto; width: 100%; } }
 .dash-activity h2 { font-size: 14px; color: var(--text); margin-bottom: 10px; }
@@ -189,7 +189,11 @@ a.recent-row { color: inherit; text-decoration: none; }
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
+.dash-activity-pager { margin-top: auto; }
 .dash-activity-rows .activity-row:last-child { border-bottom: none; }
 /* Pager under the dashboard's activity panel: the panel shows one short page
    of the feed, the pager walks back through what was loaded. */
