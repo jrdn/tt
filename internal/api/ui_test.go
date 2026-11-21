@@ -81,7 +81,7 @@ func btnText(t *testing.T, ctx context.Context) string {
 func TestThemeFollowsSystem(t *testing.T) {
 	ctx, url := newBrowser(t)
 	for scheme, want := range map[string]string{"light": lightBG, "dark": darkBG} {
-		if err := chromedp.Run(ctx, systemTheme(scheme), chromedp.Navigate(url), chromedp.WaitVisible("#theme-btn")); err != nil {
+		if err := chromedp.Run(ctx, systemTheme(scheme), chromedp.Navigate(url+"/?view=list"), chromedp.WaitVisible("#theme-btn")); err != nil {
 			t.Fatal(err)
 		}
 		if got := bodyBG(t, ctx); got != want {
@@ -95,7 +95,7 @@ func TestThemeFollowsSystem(t *testing.T) {
 
 func TestThemeToggleOverridesSystem(t *testing.T) {
 	ctx, url := newBrowser(t)
-	if err := chromedp.Run(ctx, systemTheme("dark"), chromedp.Navigate(url), chromedp.WaitVisible("#theme-btn")); err != nil {
+	if err := chromedp.Run(ctx, systemTheme("dark"), chromedp.Navigate(url+"/?view=list"), chromedp.WaitVisible("#theme-btn")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -144,7 +144,7 @@ func TestThemeToggleOverridesSystem(t *testing.T) {
 
 func TestDashboardStatusBarExcludesTerminalStatuses(t *testing.T) {
 	ctx, url := newBrowser(t)
-	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitVisible("#dash-btn")); err != nil {
+	if err := chromedp.Run(ctx, chromedp.Navigate(url+"/?view=list"), chromedp.WaitVisible("#dash-btn")); err != nil {
 		t.Fatal(err)
 	}
 	for _, status := range []string{"in_progress", "done", "cancelled"} {
@@ -185,7 +185,7 @@ func TestDashboardStatusBarExcludesTerminalStatuses(t *testing.T) {
 // and labels for active status bars and status chips.
 func TestDashboardShowsStatusCounts(t *testing.T) {
 	ctx, url := newBrowser(t)
-	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitVisible("#dash-btn")); err != nil {
+	if err := chromedp.Run(ctx, chromedp.Navigate(url+"/?view=list"), chromedp.WaitVisible("#dash-btn")); err != nil {
 		t.Fatal(err)
 	}
 	var created bool
@@ -209,7 +209,7 @@ func TestDashboardShowsStatusCounts(t *testing.T) {
 // ticket, what happened, and a comment's text.
 func TestDashboardShowsActivityFeed(t *testing.T) {
 	ctx, url := newBrowser(t)
-	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitVisible("#dash-btn")); err != nil {
+	if err := chromedp.Run(ctx, chromedp.Navigate(url+"/?view=list"), chromedp.WaitVisible("#dash-btn")); err != nil {
 		t.Fatal(err)
 	}
 	await := func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }
@@ -242,7 +242,7 @@ func TestDashboardShowsActivityFeed(t *testing.T) {
 
 func TestDashboardIssueTableFilters(t *testing.T) {
 	ctx, url := newBrowser(t)
-	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitVisible("#dash-btn")); err != nil {
+	if err := chromedp.Run(ctx, chromedp.Navigate(url+"/?view=list"), chromedp.WaitVisible("#dash-btn")); err != nil {
 		t.Fatal(err)
 	}
 	for _, body := range []string{
@@ -313,7 +313,7 @@ func TestDashboardIssueOpensInAllProjectsMode(t *testing.T) {
 // one short page of the feed and pages back through the rest.
 func TestDashboardActivityPaginates(t *testing.T) {
 	ctx, url := newBrowser(t)
-	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitVisible("#dash-btn")); err != nil {
+	if err := chromedp.Run(ctx, chromedp.Navigate(url+"/?view=list"), chromedp.WaitVisible("#dash-btn")); err != nil {
 		t.Fatal(err)
 	}
 	await := func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }
@@ -399,7 +399,7 @@ func newServerModeBrowser(t *testing.T) (context.Context, string) {
 func TestProjectSwitcherIsStickyAndAllShowsProjects(t *testing.T) {
 	ctx, url := newServerModeBrowser(t)
 	var sel, list string
-	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.Poll(`projCurrent !== null`, nil),
+	if err := chromedp.Run(ctx, chromedp.Navigate(url+"/?view=list"), chromedp.Poll(`projCurrent !== null`, nil),
 		chromedp.Evaluate(`switchProject('beta')`, nil), // reloads the page
 		chromedp.Sleep(500*time.Millisecond),
 		chromedp.Poll(`document.querySelector('.task-item') !== null`, nil),
@@ -407,7 +407,7 @@ func TestProjectSwitcherIsStickyAndAllShowsProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A fresh visit without ?project= keeps the last choice.
-	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.Poll(`document.querySelector('.task-item') !== null`, nil),
+	if err := chromedp.Run(ctx, chromedp.Navigate(url+"/?view=list"), chromedp.Poll(`document.querySelector('.task-item') !== null`, nil),
 		chromedp.Evaluate(`projCurrent`, &sel)); err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +435,7 @@ func TestServerModeCommentBoxShowsLoggedInUser(t *testing.T) {
 	// Clicks go through Evaluate: the live-refresh stream re-renders the
 	// task list, which invalidates the DOM nodes chromedp.Click waits on.
 	if err := chromedp.Run(ctx,
-		chromedp.Navigate(url),
+		chromedp.Navigate(url+"/?view=list"),
 		chromedp.Poll(`document.querySelector('.task-item') !== null`, nil),
 		chromedp.Evaluate(`document.querySelector('.task-item').click()`, nil),
 		// hydrateCommentIdentity swaps in the handle once whoami answers.
@@ -462,7 +462,7 @@ func TestRecentPopupShowsProjectAndAssignee(t *testing.T) {
 	ctx, url := newServerModeBrowser(t)
 	var rows string
 	if err := chromedp.Run(ctx,
-		chromedp.Navigate(url),
+		chromedp.Navigate(url+"/?view=list"),
 		chromedp.Poll(`document.querySelector('.task-item') !== null`, nil),
 		chromedp.Evaluate(`toggleRecent()`, nil),
 		chromedp.Poll(`document.querySelector('.recent-row') !== null`, nil),
@@ -485,7 +485,7 @@ func TestNewTaskDescriptionIsTall(t *testing.T) {
 	ctx, url := newBrowser(t)
 	var height float64
 	if err := chromedp.Run(ctx,
-		chromedp.Navigate(url),
+		chromedp.Navigate(url+"/?view=list"),
 		chromedp.WaitVisible(`button[onclick="openNewTask()"]`),
 		chromedp.Evaluate(`openNewTask()`, nil),
 		chromedp.Poll(`document.getElementById('new-task-overlay').classList.contains('open')`, nil),
@@ -506,7 +506,7 @@ func TestNewTaskModalIsRoomy(t *testing.T) {
 	var vh float64
 	if err := chromedp.Run(ctx,
 		emulation.SetDeviceMetricsOverride(1280, 800, 1, false),
-		chromedp.Navigate(url),
+		chromedp.Navigate(url+"/?view=list"),
 		chromedp.WaitVisible(`button[onclick="openNewTask()"]`),
 		chromedp.Evaluate(`openNewTask()`, nil),
 		chromedp.Poll(`document.getElementById('new-task-overlay').classList.contains('open')`, nil),
@@ -532,7 +532,7 @@ func TestSidebarSplitterResizes(t *testing.T) {
 	var stored string
 	if err := chromedp.Run(ctx,
 		emulation.SetDeviceMetricsOverride(1280, 800, 1, false),
-		chromedp.Navigate(url),
+		chromedp.Navigate(url+"/?view=list"),
 		chromedp.WaitVisible("#splitter"),
 		chromedp.Evaluate(`(localStorage.removeItem('tt-sidebar-width'), document.querySelector('.layout aside').getBoundingClientRect().width)`, &before),
 		chromedp.Evaluate(`(() => {
@@ -564,7 +564,7 @@ func TestLocalModeCommentBoxStillAsks(t *testing.T) {
 	ctx, url := newBrowser(t)
 	var footer string
 	if err := chromedp.Run(ctx,
-		chromedp.Navigate(url),
+		chromedp.Navigate(url+"/?view=list"),
 		chromedp.WaitVisible("#task-list", chromedp.ByQuery),
 		chromedp.Evaluate(`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title:'c task'})}).then(r => r.ok)`, nil,
 			func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
@@ -596,7 +596,7 @@ func TestStatusControlReadsAsDropdown(t *testing.T) {
 	var align, icon, caret string
 	var box []float64
 	if err := chromedp.Run(ctx,
-		chromedp.Navigate(url),
+		chromedp.Navigate(url+"/?view=list"),
 		chromedp.WaitVisible("#task-list", chromedp.ByQuery),
 		chromedp.Evaluate(`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title:'status task', status:'in_progress'})}).then(r => r.ok)`, nil,
 			func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
@@ -652,7 +652,7 @@ func TestCommentMarkdownIsRenderedAndStaysInItsCard(t *testing.T) {
 	var table, del, strong, bulet, target string
 	var overflow []float64
 	if err := chromedp.Run(ctx,
-		chromedp.Navigate(url),
+		chromedp.Navigate(url+"/?view=list"),
 		chromedp.WaitVisible("#task-list", chromedp.ByQuery),
 		chromedp.Evaluate(`fetch('/api/tasks', {method:'POST', body: JSON.stringify({title:'md task', description:`+
 			jsString(desc)+`})}).then(r => r.json())`, nil,
@@ -724,7 +724,7 @@ func TestTaskIdsShowTheirProject(t *testing.T) {
 	var listChip, detailID, allChips string
 	var active bool
 	if err := chromedp.Run(ctx,
-		chromedp.Navigate(url),
+		chromedp.Navigate(url+"/?view=list"),
 		chromedp.Poll(`document.querySelector('.task-item .id-chip') !== null`, nil),
 		chromedp.Evaluate(`document.querySelector('.task-item .id-chip').textContent.trim()`, &listChip),
 		// Selecting a task must not depend on the chip text matching the raw ID.
@@ -764,7 +764,7 @@ func TestTaskIdsShowTheirProject(t *testing.T) {
 // address bar follows what is on screen, and that leaving the task clears it.
 func TestTaskDeepLink(t *testing.T) {
 	ctx, url := newBrowser(t)
-	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitVisible("#dash-btn")); err != nil {
+	if err := chromedp.Run(ctx, chromedp.Navigate(url+"/?view=list"), chromedp.WaitVisible("#dash-btn")); err != nil {
 		t.Fatal(err)
 	}
 	var id string
@@ -825,7 +825,7 @@ func TestRelationRowsShowTitleAndStatus(t *testing.T) {
 		relations: [{from_id: 'aaaa', to_id: 'bbbb', type: 'related'}],
 		related_tasks: {bbbb: {title: 'The other one', status: 'in_review', priority: 1}}}`
 	if err := chromedp.Run(ctx,
-		chromedp.Navigate(url),
+		chromedp.Navigate(url+"/?view=list"),
 		chromedp.WaitVisible(`button[onclick="openNewTask()"]`),
 		chromedp.Evaluate(`renderTaskDetail(`+data+`)`, nil),
 		chromedp.Evaluate(`document.querySelector('.rel-type').parentElement.textContent.replace(/\s+/g, ' ')`, &row),
@@ -850,7 +850,7 @@ func TestCtrlKInsideFieldDoesNotResetNewTaskForm(t *testing.T) {
 	var openedOutside bool
 	press := `document.getElementById('nt-desc').dispatchEvent(new KeyboardEvent('keydown', {key: 'k', ctrlKey: true, bubbles: true}))`
 	if err := chromedp.Run(ctx,
-		chromedp.Navigate(url),
+		chromedp.Navigate(url+"/?view=list"),
 		chromedp.WaitVisible(`button[onclick="openNewTask()"]`),
 		chromedp.Evaluate(`document.body.dispatchEvent(new KeyboardEvent('keydown', {key: 'k', ctrlKey: true, bubbles: true}))`, nil),
 		chromedp.Poll(`document.getElementById('new-task-overlay').classList.contains('open')`, nil),
@@ -879,7 +879,7 @@ func TestQuestionMarkShowsKeyboardHelp(t *testing.T) {
 	}
 	var inField, afterQ, afterEsc bool
 	if err := chromedp.Run(ctx,
-		chromedp.Navigate(url),
+		chromedp.Navigate(url+"/?view=list"),
 		chromedp.WaitVisible(`button[onclick="openNewTask()"]`),
 		chromedp.Evaluate(key(`document.getElementById('search-input')`, "?"), nil),
 		chromedp.Evaluate(open, &inField),
@@ -918,14 +918,14 @@ func TestSingleKeyShortcuts(t *testing.T) {
 	var movedWhileFormOpen int
 	await := func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }
 	if err := chromedp.Run(ctx,
-		chromedp.Navigate(url),
+		chromedp.Navigate(url+"/?view=list"),
 		chromedp.WaitVisible(`button[onclick="openNewTask()"]`),
 		// Seed one at a time: concurrent POSTs to the test server race.
 		chromedp.Evaluate(`(async () => { const out = []; for (const title of ['one','two','three']) { const r = await fetch('/api/tasks', {method:'POST', body: JSON.stringify({title})}); out.push(r.ok); } return out; })()`, &seeded, await),
 		// Reload through CDP (not location.reload) so the list renders the seeded tasks.
 		// Poll, not WaitVisible: a selected task hides the sidebar on the narrow
 		// default viewport, so "visible" is the wrong test here.
-		chromedp.Navigate(url),
+		chromedp.Navigate(url+"/?view=list"),
 		chromedp.Poll(`document.querySelector('#task-list .task-item') !== null`, nil),
 		chromedp.Evaluate(`document.querySelectorAll('#task-list .task-item').length`, &count),
 		chromedp.Evaluate(`document.getElementById('task-list').innerHTML.slice(0, 400)`, &listHTML),
@@ -1037,7 +1037,7 @@ func TestCtrlEnterSubmitsTheTypedForm(t *testing.T) {
 		FormOpen         bool   `json:"formOpen"`
 	}
 	if err := chromedp.Run(ctx,
-		chromedp.Navigate(url),
+		chromedp.Navigate(url+"/?view=list"),
 		chromedp.WaitVisible("#task-list", chromedp.ByQuery),
 		chromedp.Evaluate(script, &out,
 			func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
@@ -1088,7 +1088,7 @@ func TestDashboardCardsStaySmallBesideActivity(t *testing.T) {
 	var cols int
 	if err := chromedp.Run(ctx,
 		chromedp.EmulateViewport(1000, 800),
-		chromedp.Navigate(url),
+		chromedp.Navigate(url+"/?view=list"),
 		chromedp.WaitVisible("#dash-btn"),
 		chromedp.Click("#dash-btn", chromedp.ByID),
 		chromedp.Poll(`document.querySelector('.dash-grid') !== null`, nil),
@@ -1143,7 +1143,7 @@ func TestDashboardActivityRowOpensItsTask(t *testing.T) {
 	}
 	t.Run("local", func(t *testing.T) {
 		ctx, url := newBrowser(t)
-		if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitVisible("#dash-btn")); err != nil {
+		if err := chromedp.Run(ctx, chromedp.Navigate(url+"/?view=list"), chromedp.WaitVisible("#dash-btn")); err != nil {
 			t.Fatal(err)
 		}
 		var ok bool
@@ -1152,7 +1152,7 @@ func TestDashboardActivityRowOpensItsTask(t *testing.T) {
 			&ok, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) })); err != nil || !ok {
 			t.Fatalf("create task: %v %v", ok, err)
 		}
-		check(t, ctx, url, "linked task")
+		check(t, ctx, url+"/?view=list", "linked task")
 	})
 	t.Run("server project", func(t *testing.T) {
 		ctx, url := newServerModeBrowser(t)
@@ -1246,5 +1246,25 @@ func TestCommandBar(t *testing.T) {
 		chromedp.Poll(`location.search.includes('project=beta')`, nil),
 	); err != nil {
 		t.Fatalf("switch project: %v", err)
+	}
+}
+
+// TestDashboardIsTheDefaultPage checks a bare visit opens on the dashboard,
+// while ?view=list, an explicit project or a task link skip it.
+func TestDashboardIsTheDefaultPage(t *testing.T) {
+	ctx, url := newServerModeBrowser(t)
+	for path, want := range map[string]bool{"/": true, "/?view=list": false, "/?project=alpha": false} {
+		var open bool
+		if err := chromedp.Run(ctx,
+			chromedp.Navigate(url+path),
+			chromedp.Poll(`projCurrent !== null`, nil),
+			chromedp.Sleep(300*time.Millisecond),
+			chromedp.Evaluate(`document.body.classList.contains('show-dashboard')`, &open),
+		); err != nil {
+			t.Fatal(err)
+		}
+		if open != want {
+			t.Errorf("%s: dashboard open = %v, want %v", path, open, want)
+		}
 	}
 }

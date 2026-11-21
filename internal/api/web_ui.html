@@ -2925,8 +2925,13 @@ setupProject().catch(() => {
   loadTasks();
   if (ALL) PROJECTS.forEach(p => startLive(projBase(p.slug)));
   else startLive(API);
-  const linked = new URLSearchParams(location.search).get('task');
+  // A bare visit opens on the dashboard. A task link, an explicit project
+  // (switching project, clicking a dashboard card) or ?view=list goes straight
+  // to the list.
+  const q = new URLSearchParams(location.search);
+  const linked = q.get('task');
   if (linked) openLinkedTask(linked);
+  else if (!q.has('project') && q.get('view') !== 'list') toggleDashboard(true);
 });
 </script>
 </body>
