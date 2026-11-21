@@ -16,6 +16,7 @@ import (
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 	"github.com/jrdn/tt/internal/api"
 	"github.com/jrdn/tt/internal/db"
 	"github.com/jrdn/tt/internal/task"
@@ -284,7 +285,7 @@ func TestDashboardIssueOpensInAllProjectsMode(t *testing.T) {
 	ctx, url := newServerModeBrowser(t)
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(url+"/?project=all"),
-		chromedp.Poll(`document.querySelector('#project-select') !== null`, nil),
+		chromedp.Poll(`document.querySelector('#project-btn') !== null`, nil),
 		chromedp.Sleep(300*time.Millisecond),
 		chromedp.Click("#dash-btn", chromedp.ByID),
 		chromedp.Poll(`document.querySelectorAll('#issue-rows tr').length >= 2`, nil),
@@ -398,7 +399,7 @@ func newServerModeBrowser(t *testing.T) (context.Context, string) {
 func TestProjectSwitcherIsStickyAndAllShowsProjects(t *testing.T) {
 	ctx, url := newServerModeBrowser(t)
 	var sel, list string
-	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.Poll(`document.querySelector('#project-list option') !== null`, nil),
+	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.Poll(`projCurrent !== null`, nil),
 		chromedp.Evaluate(`switchProject('beta')`, nil), // reloads the page
 		chromedp.Sleep(500*time.Millisecond),
 		chromedp.Poll(`document.querySelector('.task-item') !== null`, nil),
@@ -407,7 +408,7 @@ func TestProjectSwitcherIsStickyAndAllShowsProjects(t *testing.T) {
 	}
 	// A fresh visit without ?project= keeps the last choice.
 	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.Poll(`document.querySelector('.task-item') !== null`, nil),
-		chromedp.Value("#project-select", &sel, chromedp.ByID)); err != nil {
+		chromedp.Evaluate(`projCurrent`, &sel)); err != nil {
 		t.Fatal(err)
 	}
 	if sel != "beta" {
@@ -1163,34 +1164,48 @@ func TestDashboardActivityRowOpensItsTask(t *testing.T) {
 	})
 }
 
-// TestProjectSwitcherTypesToSwitch checks the header switcher is a searchable
-// input: it lists every project, and typing a project's name or slug switches
-// to it, while an unknown entry leaves the current project in place.
+// TestProjectSwitcherTypesToSwitch checks the header switcher is a filterable
+// dropdown: it lists every project, typing narrows the list by name or slug,
+// Enter switches to the highlighted project, and Esc closes without switching.
 func TestProjectSwitcherTypesToSwitch(t *testing.T) {
 	ctx, url := newServerModeBrowser(t)
-	var options, value string
+	var options, filtered, open string
+	opts := `[...document.querySelectorAll('#project-opts .proj-opt')].map(o => o.dataset.slug).join(',')`
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(url+"/?project=alpha"),
-		chromedp.Poll(`document.querySelectorAll('#project-list option').length > 0`, nil),
-		chromedp.Evaluate(`[...document.querySelectorAll('#project-list option')].map(o => o.value).join(',')`, &options),
-		chromedp.Evaluate(`(() => { const i = document.getElementById('project-select'); i.value = 'nope'; i.dispatchEvent(new Event('change')); return i.value })()`, &value),
+		chromedp.Poll(`projCurrent === 'alpha'`, nil),
+		chromedp.Evaluate(`document.getElementById('project-btn').textContent`, &open),
+		chromedp.Click("#project-btn", chromedp.ByID),
+		chromedp.Evaluate(opts, &options),
+		chromedp.SendKeys("#project-filter", "BET", chromedp.ByID),
+		chromedp.Evaluate(opts, &filtered),
 	); err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(open, "Alpha") {
+		t.Errorf("button label = %q, want the current project", open)
 	}
 	if options != "all,alpha,beta" {
 		t.Errorf("options = %q, want all,alpha,beta", options)
 	}
-	if value != "alpha" {
-		t.Errorf("after unknown entry value = %q, want alpha", value)
+	if filtered != "beta" {
+		t.Errorf("filtered = %q, want beta", filtered)
 	}
+	var stillAlpha string
 	if err := chromedp.Run(ctx,
-		chromedp.Evaluate(`(() => { const i = document.getElementById('project-select'); i.value = 'Beta'; setTimeout(() => i.dispatchEvent(new Event('change')), 0) })()`, nil),
-		chromedp.Sleep(700*time.Millisecond), // the page reloads for the new project
+		chromedp.SendKeys("#project-filter", kb.Escape, chromedp.ByID),
+		chromedp.Evaluate(`document.getElementById('project-pop').classList.contains('open') + ':' + projCurrent`, &stillAlpha),
 	); err != nil {
 		t.Fatal(err)
 	}
+	if stillAlpha != "false:alpha" {
+		t.Errorf("after Esc = %q, want closed and still alpha", stillAlpha)
+	}
 	if err := chromedp.Run(ctx,
-		chromedp.Poll(`location.search.includes('project=beta') && document.getElementById('project-select').value === 'beta'`, nil),
+		chromedp.Click("#project-btn", chromedp.ByID),
+		chromedp.SendKeys("#project-filter", "beta"+kb.Enter, chromedp.ByID),
+		chromedp.Sleep(700*time.Millisecond), // the page reloads for the new project
+		chromedp.Poll(`location.search.includes('project=beta') && projCurrent === 'beta'`, nil),
 	); err != nil {
 		t.Fatal(err)
 	}
