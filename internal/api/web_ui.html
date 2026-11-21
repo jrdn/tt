@@ -83,6 +83,43 @@ header h1 .version:empty { display: none; }
 .recent-btn:hover { background: rgba(255,255,255,0.14); }
 .recent-btn.active { background: rgba(203,166,247,0.2); border-color: #cba6f7; color: #cba6f7; }
 
+/* ── Project switcher ── */
+.proj-switch { position: relative; }
+.proj-switch .recent-btn { min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-pop {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 260px;
+  max-width: calc(100vw - 24px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  z-index: 100;
+  overflow: hidden;
+  color: var(--text);
+}
+.proj-pop.open { display: block; }
+.proj-pop input {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  padding: 10px 14px;
+  outline: none;
+}
+.proj-opts { max-height: 320px; overflow-y: auto; }
+.proj-opt { display: flex; justify-content: space-between; gap: 10px; padding: 8px 14px; font-size: 13px; cursor: pointer; }
+.proj-opt small { color: var(--text-dim); font-size: 12px; }
+.proj-opt.active { background: var(--hover); }
+.proj-opt.current { font-weight: 600; }
+.proj-empty { padding: 10px 14px; font-size: 12px; color: var(--text-dim); }
+
 /* ── Recent popup ── */
 .recent-popup {
   position: fixed;
@@ -954,10 +991,14 @@ main {
 <header>
   <button class="back-btn" id="back-btn" onclick="goBackToList()" style="display:none">← Back</button>
   <h1>tt<span class="version" id="tt-version" title="tt build version">{{TT_VERSION}}</span></h1>
-  <input id="project-select" list="project-list" placeholder="Switch project…" autocomplete="off" spellcheck="false"
-    aria-label="Switch project" style="display:none;width:150px"
-    onfocus="this.select()" onchange="pickProject(this)" onkeydown="if(event.key==='Escape'){this.value=this.dataset.current;this.blur()}">
-  <datalist id="project-list"></datalist>
+  <div class="proj-switch" id="project-switch" style="display:none">
+    <button class="recent-btn" id="project-btn" aria-haspopup="listbox" aria-expanded="false" title="Switch project (p)" onclick="toggleProjectMenu()"></button>
+    <div class="proj-pop" id="project-pop">
+      <input id="project-filter" placeholder="Filter projects…" autocomplete="off" spellcheck="false" aria-label="Filter projects"
+        oninput="projIdx = 0; renderProjectOpts()" onkeydown="onProjectKey(event)">
+      <div class="proj-opts" id="project-opts" role="listbox"></div>
+    </div>
+  </div>
   <button class="btn btn-ghost" onclick="openNewTask()" style="font-size:12px;padding:5px 12px">+ New</button>
   <button class="recent-btn" id="dash-btn" onclick="toggleDashboard()">Dashboard</button>
   <button class="recent-btn" id="recent-btn" onclick="toggleRecent()">Recent</button>
@@ -1034,6 +1075,7 @@ main {
         <tr><td><kbd>s</kbd></td><td>Status of the open task</td></tr>
         <tr><td><kbd>c</kbd></td><td>Comment on the open task</td></tr>
         <tr><td><kbd>d</kbd></td><td>Toggle the dashboard</td></tr>
+        <tr><td><kbd>p</kbd></td><td>Switch project</td></tr>
         <tr><td><kbd>?</kbd></td><td>Show this help</td></tr>
         <tr><td><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>K</kbd></td><td>New task (not while typing in a field, where Ctrl-K kills the line)</td></tr>
         <tr><td><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd></td><td>Submit the comment or new task you are typing</td></tr>
@@ -1173,26 +1215,87 @@ async function setupProject() {
   ALL = choice === ALL_PROJECTS;
   CURRENT_PROJECT = ALL ? null : choice;
   if (!ALL) API = projBase(choice);
-  const sel = document.getElementById('project-select');
-  const current = ALL ? ALL_PROJECTS : choice;
-  document.getElementById('project-list').innerHTML =
-    (PROJECTS.length > 1 ? `<option value="${ALL_PROJECTS}">All projects</option>` : '') +
-    PROJECTS.map(p => `<option value="${esc(p.slug)}">${esc(p.name)}</option>`).join('');
-  sel.dataset.current = current;
-  sel.value = current;
-  sel.style.display = PROJECTS.length > 1 ? '' : 'none';
+  projCurrent = ALL ? ALL_PROJECTS : choice;
+  document.getElementById('project-btn').textContent = projLabel(projCurrent) + ' ▾';
+  document.getElementById('project-switch').style.display = PROJECTS.length > 1 ? '' : 'none';
   return true;
 }
 
-// pickProject resolves what was typed in the switcher (a slug, a project name
-// or "all projects") and switches; anything else puts the current project back.
-function pickProject(input) {
-  const q = input.value.trim().toLowerCase();
-  const hit = q === 'all projects' && PROJECTS.length > 1 ? ALL_PROJECTS
-    : (PROJECTS.find(p => p.slug.toLowerCase() === q || p.name.toLowerCase() === q) || {}).slug || (q === ALL_PROJECTS && PROJECTS.length > 1 ? ALL_PROJECTS : null);
-  if (!hit || hit === input.dataset.current) { input.value = input.dataset.current; return; }
-  switchProject(hit);
+// The header switcher is a button that opens a filterable list: type to narrow
+// by project name or slug, arrows move, Enter switches, Esc closes.
+let projCurrent = null;
+let projIdx = 0;
+
+function projLabel(slug) {
+  if (slug === ALL_PROJECTS) return 'All projects';
+  const p = PROJECTS.find(p => p.slug === slug);
+  return p ? p.name : slug;
 }
+
+function projMatches() {
+  const q = document.getElementById('project-filter').value.trim().toLowerCase();
+  const all = (PROJECTS.length > 1 ? [{ slug: ALL_PROJECTS, name: 'All projects', all: true }] : []).concat(PROJECTS);
+  return all.filter(p => !q || p.name.toLowerCase().includes(q) || (!p.all && p.slug.toLowerCase().includes(q)));
+}
+
+function renderProjectOpts() {
+  const m = projMatches();
+  projIdx = Math.min(projIdx, Math.max(m.length - 1, 0));
+  document.getElementById('project-opts').innerHTML = m.length ? m.map((p, i) =>
+    `<div class="proj-opt${i === projIdx ? ' active' : ''}${p.slug === projCurrent ? ' current' : ''}" role="option" data-slug="${esc(p.slug)}"
+      onmousedown="event.preventDefault()" onclick="pickProject('${esc(p.slug)}')" onmousemove="projIdx = ${i}; renderProjectOpts()">
+      <span>${esc(p.name)}</span>${p.all || p.slug === p.name ? '' : `<small>${esc(p.slug)}</small>`}</div>`).join('')
+    : '<div class="proj-empty">No matching projects</div>';
+  const act = document.querySelector('#project-opts .active');
+  if (act) act.scrollIntoView({ block: 'nearest' });
+}
+
+function openProjectMenu() {
+  const sw = document.getElementById('project-switch');
+  if (!sw || sw.style.display === 'none') return false;
+  const f = document.getElementById('project-filter');
+  f.value = '';
+  projIdx = Math.max(projMatches().findIndex(p => p.slug === projCurrent), 0);
+  document.getElementById('project-pop').classList.add('open');
+  document.getElementById('project-btn').setAttribute('aria-expanded', 'true');
+  renderProjectOpts();
+  f.focus();
+  return true;
+}
+
+function closeProjectMenu() {
+  document.getElementById('project-pop').classList.remove('open');
+  document.getElementById('project-btn').setAttribute('aria-expanded', 'false');
+}
+
+function toggleProjectMenu() {
+  if (document.getElementById('project-pop').classList.contains('open')) closeProjectMenu();
+  else openProjectMenu();
+}
+
+function pickProject(slug) {
+  closeProjectMenu();
+  if (slug !== projCurrent) switchProject(slug);
+}
+
+function onProjectKey(e) {
+  const m = projMatches();
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    projIdx = m.length ? (projIdx + (e.key === 'ArrowDown' ? 1 : m.length - 1)) % m.length : 0;
+    renderProjectOpts();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (m[projIdx]) pickProject(m[projIdx].slug);
+  } else if (e.key === 'Escape') {
+    closeProjectMenu();
+    document.getElementById('project-btn').focus();
+  }
+}
+
+document.addEventListener('mousedown', e => {
+  if (!e.target.closest('#project-switch')) closeProjectMenu();
+});
 
 function switchProject(slug) {
   try { localStorage.setItem('tt-project', slug); } catch (_) {}
@@ -2534,6 +2637,7 @@ document.addEventListener('keydown', e => {
     case 's': handled = focusById('status-sel'); break;
     case 'c': handled = focusById('comment-body'); break;
     case 'd': toggleDashboard(); break;
+    case 'p': handled = openProjectMenu(); break;
     case '?': openHelp(); break;
     default: handled = false;
   }
