@@ -32,6 +32,28 @@ func TestIssuer_SignVerify(t *testing.T) {
 	}
 }
 
+// A token issued after a revocation cutoff must carry an iat after it, even
+// when both fall within the same millisecond.
+func TestIssuer_IssuedAtRoundsUp(t *testing.T) {
+	iss, err := NewIssuer(master, "tt-test", time.Hour, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cutoff := time.Date(2026, 1, 1, 0, 0, 0, 123_000_000, time.UTC) // revoked_before
+	iss.now = func() time.Time { return cutoff.Add(300 * time.Microsecond) }
+	tok, err := iss.Sign(&Claims{Kind: KindAgent, Handle: "a"}, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := iss.Verify(tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.IssuedAt.Time.After(cutoff) {
+		t.Errorf("iat %v not after cutoff %v", c.IssuedAt.Time, cutoff)
+	}
+}
+
 func TestIssuer_RejectsExpiredAndForeign(t *testing.T) {
 	iss, _ := NewIssuer(master, "tt-test", time.Hour, 1)
 	tok, _ := iss.Sign(&Claims{Handle: "x"}, time.Time{})
