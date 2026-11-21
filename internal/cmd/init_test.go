@@ -93,6 +93,15 @@ func TestInjectSection_IdempotentContent(t *testing.T) {
 	}
 }
 
+func TestInjectedContentUsesValidPriorityRange(t *testing.T) {
+	if !strings.Contains(injectedContent, "0=critical, 1=high, 2=normal (default), 3=low") {
+		t.Fatal("injected guidance missing valid priority range")
+	}
+	if strings.Contains(injectedContent, "4=backlog") {
+		t.Fatal("injected guidance advertises unsupported priority 4")
+	}
+}
+
 func TestInitServerProject(t *testing.T) {
 	cases := []struct {
 		name              string
