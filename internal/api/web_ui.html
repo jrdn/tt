@@ -2622,6 +2622,13 @@ function focusById(id) {
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
+    const cmdOverlay = document.getElementById('cmd-overlay');
+    if (cmdOverlay && cmdOverlay.classList.contains('open')) {
+      if (cmdStack.length > 1) { cmdStack.pop(); cmdShowStep(); }
+      else closeCommandBar();
+      e.preventDefault();
+      return;
+    }
     closeNewTask();
     closeHelp();
     closeRecent();
