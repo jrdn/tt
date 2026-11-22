@@ -1240,6 +1240,20 @@ func TestCommandBar(t *testing.T) {
 	}
 	if err := chromedp.Run(ctx,
 		chromedp.Evaluate(`openCommandBar()`, nil),
+		chromedp.Evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))`, nil),
+		chromedp.Poll(`!document.getElementById('cmd-overlay').classList.contains('open')`, nil),
+		chromedp.Evaluate(`openCommandBar()`, nil),
+		chromedp.SendKeys("#cmd-input", "status"+kb.Enter, chromedp.ByID),
+		chromedp.Poll(`cmdStack.length > 1`, nil),
+		chromedp.Evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))`, nil),
+		chromedp.Poll(`cmdStack.length === 1 && document.getElementById('cmd-overlay').classList.contains('open')`, nil),
+		chromedp.SendKeys("#cmd-input", kb.Escape, chromedp.ByID),
+		chromedp.Poll(`!document.getElementById('cmd-overlay').classList.contains('open')`, nil),
+	); err != nil {
+		t.Fatalf("escape closes or backs out of command bar: %v", err)
+	}
+	if err := chromedp.Run(ctx,
+		chromedp.Evaluate(`openCommandBar()`, nil),
 		chromedp.SendKeys("#cmd-input", "switch project"+kb.Enter, chromedp.ByID),
 		chromedp.SendKeys("#cmd-input", "beta"+kb.Enter, chromedp.ByID),
 		chromedp.Sleep(700*time.Millisecond), // the page reloads for the new project
