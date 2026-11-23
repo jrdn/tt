@@ -1252,19 +1252,33 @@ func TestCommandBar(t *testing.T) {
 // TestDashboardIsTheDefaultPage checks a bare visit opens on the dashboard,
 // while ?view=list, an explicit project or a task link skip it.
 func TestDashboardIsTheDefaultPage(t *testing.T) {
-	ctx, url := newServerModeBrowser(t)
-	for path, want := range map[string]bool{"/": true, "/?view=list": false, "/?project=alpha": false} {
-		var open bool
-		if err := chromedp.Run(ctx,
-			chromedp.Navigate(url+path),
-			chromedp.Poll(`projCurrent !== null`, nil),
-			chromedp.Sleep(300*time.Millisecond),
-			chromedp.Evaluate(`document.body.classList.contains('show-dashboard')`, &open),
-		); err != nil {
-			t.Fatal(err)
+	t.Run("local mode", func(t *testing.T) {
+		ctx, url := newBrowser(t)
+		for path, want := range map[string]bool{"/": true, "/?view=list": false} {
+			var open bool
+			if err := chromedp.Run(ctx, chromedp.Navigate(url+path), chromedp.Sleep(100*time.Millisecond), chromedp.Evaluate(`document.body.classList.contains('show-dashboard')`, &open)); err != nil {
+				t.Fatal(err)
+			}
+			if open != want {
+				t.Errorf("%s: dashboard open = %v, want %v", path, open, want)
+			}
 		}
-		if open != want {
-			t.Errorf("%s: dashboard open = %v, want %v", path, open, want)
+	})
+	t.Run("server mode", func(t *testing.T) {
+		ctx, url := newServerModeBrowser(t)
+		for path, want := range map[string]bool{"/": true, "/?view=list": false, "/?project=alpha": false} {
+			var open bool
+			if err := chromedp.Run(ctx,
+				chromedp.Navigate(url+path),
+				chromedp.Poll(`projCurrent !== null`, nil),
+				chromedp.Sleep(300*time.Millisecond),
+				chromedp.Evaluate(`document.body.classList.contains('show-dashboard')`, &open),
+			); err != nil {
+				t.Fatal(err)
+			}
+			if open != want {
+				t.Errorf("%s: dashboard open = %v, want %v", path, open, want)
+			}
 		}
-	}
+	})
 }

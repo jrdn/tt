@@ -2931,7 +2931,7 @@ setupProject().catch(() => {
   const q = new URLSearchParams(location.search);
   const linked = q.get('task');
   if (linked) openLinkedTask(linked);
-  else if (!q.has('project') && q.get('view') !== 'list') toggleDashboard(true);
+  else if (q.get('view') !== 'list' && (!TT_SERVER || !q.has('project'))) toggleDashboard(true);
 });
 </script>
 </body>
